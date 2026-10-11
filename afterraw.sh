@@ -7,6 +7,7 @@ if [ -z "${BASH_VERSION:-}" ] || shopt -oq posix; then
 fi
 
 # 解析參數
+DO_REDO=false
 DO_PRE=false
 DO_LOAD_RAW=false
 DO_OPEN_PSD=false
@@ -18,6 +19,7 @@ FOLDER_NAME=""
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
+        --redo) DO_REDO=true; DO_PRE=true ;;
         --pre|--pre-only) DO_PRE=true ;;
         --load-raw|--open-raw|--raw-only) DO_LOAD_RAW=true ;;
         --open-psd|--psd) DO_OPEN_PSD=true ;;
@@ -46,6 +48,11 @@ if [ "$DATE_SPECIFIED" = true ] && ! [[ "$DATE_PREFIX" =~ ^[0-9]{8}$ ]]; then
     exit 1
 fi
 
+if [ "$DO_REDO" = true ] && { [ "$DO_LOAD_RAW" = true ] || [ "$DO_OPEN_PSD" = true ] || [ "$DO_IG" = true ] || [ "$DO_FB" = true ] || [ "$DATE_SPECIFIED" = true ]; }; then
+    echo "錯誤：--redo 是獨立重新修圖模式，不能與 --load-raw、--open-psd、--ig、--fb 或 --date 同時使用"
+    exit 1
+fi
+
 if [ "$DO_LOAD_RAW" = true ] && { [ "$DO_PRE" = true ] || [ "$DO_OPEN_PSD" = true ] || [ "$DO_IG" = true ] || [ "$DO_FB" = true ]; }; then
     echo "錯誤：--load-raw 是獨立載入模式，不能與 --pre、--open-psd、--ig 或 --fb 同時使用"
     exit 1
@@ -71,6 +78,7 @@ fi
 if [ -z "$FOLDER_NAME" ]; then
     echo "錯誤：請提供資料夾名稱作為參數"
     echo "使用方式:"
+    echo "  重新修圖: $0 --redo <資料夾名稱>"
     echo "  前置作業: $0 --pre [--date YYYYMMDD] <資料夾名稱>"
     echo "  載入 RAW: $0 --load-raw [--date YYYYMMDD] <資料夾名稱|RAW目錄路徑>"
     echo "  開啟 PSD 檔案: $0 --open-psd <資料夾名稱>"
@@ -1346,6 +1354,36 @@ write_current_photo_edit_dir() {
     echo "✗ 無法寫入目前修圖目錄：$CURRENT_EDIT_FILE"
     return 1
 }
+
+# 重新修圖：清除 RAW 目錄的 Camera Raw sidecar 與 PSD、IG、FB 目錄，再執行前置作業
+if [ "$DO_REDO" = true ]; then
+    REDO_SIDECAR_COUNT=0
+
+    echo ""
+    echo "開始重新修圖：清除 Camera Raw 設定與輸出成品..."
+
+    while IFS= read -r -d '' sidecar_file; do
+        if ! rm -f "$sidecar_file"; then
+            echo "✗ 無法刪除：$sidecar_file"
+            exit 1
+        fi
+        echo "✓ 刪除：$(basename "$sidecar_file")"
+        REDO_SIDECAR_COUNT=$((REDO_SIDECAR_COUNT + 1))
+    done < <(find "$RAW_DIR" -maxdepth 1 -type f \( -iname "*.xmp" -o -iname "*.acr" \) -print0)
+    echo "共刪除 ${REDO_SIDECAR_COUNT} 個 .xmp／.acr 檔案"
+
+    for redo_output_dir in "$TARGET_DIR/PSD" "$TARGET_DIR/IG" "$TARGET_DIR/FB"; do
+        if [ ! -e "$redo_output_dir" ]; then
+            echo "⊘ 目錄不存在，略過：$redo_output_dir"
+            continue
+        fi
+        if ! rm -rf "$redo_output_dir"; then
+            echo "✗ 無法刪除目錄：$redo_output_dir"
+            exit 1
+        fi
+        echo "✓ 刪除目錄：$redo_output_dir"
+    done
+fi
 
 # 儲存 RAW 檔案
 RAW_FILES_FOUND=()

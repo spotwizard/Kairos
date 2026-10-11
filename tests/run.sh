@@ -219,6 +219,13 @@ case "$command_name" in
         done
         exit 130
         ;;
+    confirm)
+        printf 'confirm' >> "$KAIROS_MENU_LOG"
+        printf '\t%s' "$@" >> "$KAIROS_MENU_LOG"
+        printf '\n' >> "$KAIROS_MENU_LOG"
+        IFS= read -r selection || exit 130
+        [ "$selection" = "y" ]
+        ;;
     *) exit 2 ;;
 esac
 MOCK
@@ -292,40 +299,52 @@ test_dashboard() {
     expect_dashboard_call "rename-worker"
 
     reset_dashboard_log
-    set_input_queue "3" "1" "1" "8" "4"
+    set_input_queue "3" "1" "1" "y" "9" "4"
+    run_dashboard || fail "AfterRAW 重新修圖選單執行失敗"
+    expect_dashboard_call $'afterraw-worker\t--redo\tNew Project'
+    grep -F $'confirm\t--default=false' "$TEST_ROOT/dashboard/menus.log" > /dev/null \
+        || fail "重新修圖執行前應要求確認，且預設為取消"
+
+    reset_dashboard_log
+    set_input_queue "3" "1" "1" "n" "9" "4"
+    run_dashboard || fail "取消重新修圖後返回選單失敗"
+    [ ! -s "$TEST_ROOT/dashboard/workers.log" ] || fail "取消重新修圖不應執行 worker"
+
+    reset_dashboard_log
+    set_input_queue "3" "1" "2" "9" "4"
     run_dashboard || fail "AfterRAW 前置選單執行失敗"
     expect_dashboard_call $'afterraw-worker\t--pre\tNew Project'
     [ "$(sed -n '2p' "$TEST_ROOT/dashboard/menus.log")" = $'選擇修圖專案\tNew Project\tStone House\tEmpty\t0  返回主選單' ] \
         || fail "應先列出專案，依照片修改時間排序，忽略上次專案、目錄及 XMP 的修改時間"
-    [ "$(sed -n '3p' "$TEST_ROOT/dashboard/menus.log")" = $'專案：New Project\t1  前置作業\t2  載入 RAW\t3  開啟 PSD 檔案\t4  IG＋FB 後置輸出\t5  僅 IG 後置輸出\t6  僅 FB 後置輸出\t0  重新選擇專案\t9  返回主選單' ] \
+    [ "$(sed -n '3p' "$TEST_ROOT/dashboard/menus.log")" = $'專案：New Project\t1  重新修圖\t2  前置作業\t3  載入 RAW\t4  開啟 PSD 檔案\t5  IG＋FB 後置輸出\t6  僅 IG 後置輸出\t7  僅 FB 後置輸出\t0  重新選擇專案\t9  返回主選單' ] \
         || fail "選定專案後的操作選項不符"
-    [ "$(sed -n '4p' "$TEST_ROOT/dashboard/menus.log")" = $'專案：New Project\t1  前置作業\t2  載入 RAW\t3  開啟 PSD 檔案\t4  IG＋FB 後置輸出\t5  僅 IG 後置輸出\t6  僅 FB 後置輸出\t0  重新選擇專案\t9  返回主選單' ] \
+    [ "$(sed -n '4p' "$TEST_ROOT/dashboard/menus.log")" = $'專案：New Project\t1  重新修圖\t2  前置作業\t3  載入 RAW\t4  開啟 PSD 檔案\t5  IG＋FB 後置輸出\t6  僅 IG 後置輸出\t7  僅 FB 後置輸出\t0  重新選擇專案\t9  返回主選單' ] \
         || fail "AfterRAW 程序完成後應自動返回目前專案的操作選單"
     ! grep -F "按 Enter 返回儀表板" "$TEST_ROOT/dashboard/output.log" > /dev/null \
         || fail "AfterRAW 程序完成後不應要求按 Enter 返回儀表板"
 
     reset_dashboard_log
-    set_input_queue "3" "2" "2" "8" "4"
+    set_input_queue "3" "2" "3" "9" "4"
     run_dashboard || fail "AfterRAW 載入選單執行失敗"
     expect_dashboard_call $'afterraw-worker\t--load-raw\tStone House'
 
     reset_dashboard_log
-    set_input_queue "3" "2" "3" "8" "4"
+    set_input_queue "3" "2" "4" "9" "4"
     run_dashboard || fail "AfterRAW 開啟 PSD 選單執行失敗"
     expect_dashboard_call $'afterraw-worker\t--open-psd\tStone House'
 
     reset_dashboard_log
-    set_input_queue "3" "2" "4" "8" "4"
+    set_input_queue "3" "2" "5" "9" "4"
     run_dashboard || fail "AfterRAW IG＋FB 選單執行失敗"
     expect_dashboard_call $'afterraw-worker\tStone House'
 
     reset_dashboard_log
-    set_input_queue "3" "2" "5" "8" "4"
+    set_input_queue "3" "2" "6" "9" "4"
     run_dashboard || fail "AfterRAW IG 選單執行失敗"
     expect_dashboard_call $'afterraw-worker\t--ig\tStone House'
 
     reset_dashboard_log
-    set_input_queue "3" "2" "6" "8" "4"
+    set_input_queue "3" "2" "7" "9" "4"
     run_dashboard || fail "AfterRAW FB 選單執行失敗"
     expect_dashboard_call $'afterraw-worker\t--fb\tStone House'
 
@@ -335,7 +354,7 @@ test_dashboard() {
     [ ! -s "$TEST_ROOT/dashboard/workers.log" ] || fail "取消選單不應執行 worker"
 
     reset_dashboard_log
-    set_input_queue "3" "1" "7" "2" "5" "8" "4"
+    set_input_queue "3" "1" "8" "2" "6" "9" "4"
     run_dashboard || fail "重新選擇專案失敗"
     expect_dashboard_call $'afterraw-worker\t--ig\tStone House'
     [ "$(wc -l < "$TEST_ROOT/dashboard/menus.log" | tr -d ' ')" = 7 ] \
@@ -363,7 +382,22 @@ test_dashboard() {
     [ "$status" -eq 7 ] || fail "worker 失敗狀態未由 kairos 傳回（實際 ${status}）：$(sed -n '1,20p' "$TEST_ROOT/dashboard/output.log")"
 }
 
+test_afterraw_redo_arguments() {
+    local output
+
+    if output=$(/bin/bash "$ROOT/afterraw.sh" --redo --date 20260815 "專案" 2>&1); then
+        fail "--redo 搭配 --date 應該失敗"
+    fi
+    [[ "$output" = *"--redo 是獨立重新修圖模式"* ]] || fail "未回報 --redo 參數衝突：$output"
+
+    if output=$(/bin/bash "$ROOT/afterraw.sh" --redo --ig "專案" 2>&1); then
+        fail "--redo 搭配 --ig 應該失敗"
+    fi
+    [[ "$output" = *"--redo 是獨立重新修圖模式"* ]] || fail "未回報 --redo 參數衝突：$output"
+}
+
 test_syntax
+test_afterraw_redo_arguments
 test_organize_raw_by_date
 test_rename_raw
 test_dashboard

@@ -126,6 +126,13 @@ choose_photo_target() {
     [ -n "$SELECTED_TARGET" ] && [ "$SELECTED_TARGET" != "0  返回主選單" ]
 }
 
+confirm_redo() {
+    local target="$1"
+
+    "$GUM_BIN" confirm --default=false --affirmative "確定" --negative "取消" \
+        "重新修圖會刪除「${target}」RAW 目錄下的 .xmp、.acr 檔案及 PSD、IG、FB 目錄，確定要繼續嗎？"
+}
+
 afterraw_menu() {
     local choice
     local target
@@ -138,23 +145,28 @@ afterraw_menu() {
         while true; do
             clear_screen
             header
-            choice=$("$GUM_BIN" choose --header "專案：$target" --height 8 -- \
-                "1  前置作業" \
-                "2  載入 RAW" \
-                "3  開啟 PSD 檔案" \
-                "4  IG＋FB 後置輸出" \
-                "5  僅 IG 後置輸出" \
-                "6  僅 FB 後置輸出" \
+            choice=$("$GUM_BIN" choose --header "專案：$target" --height 9 -- \
+                "1  重新修圖" \
+                "2  前置作業" \
+                "3  載入 RAW" \
+                "4  開啟 PSD 檔案" \
+                "5  IG＋FB 後置輸出" \
+                "6  僅 IG 後置輸出" \
+                "7  僅 FB 後置輸出" \
                 "0  重新選擇專案" \
                 "9  返回主選單") || break
 
             case "$choice" in
-                "1  前置作業") title="AfterRAW｜前置作業"; args=(--pre) ;;
-                "2  載入 RAW") title="AfterRAW｜載入 RAW"; args=(--load-raw) ;;
-                "3  開啟 PSD 檔案") title="AfterRAW｜開啟 PSD 檔案"; args=(--open-psd) ;;
-                "4  IG＋FB 後置輸出") title="AfterRAW｜IG＋FB 後置輸出"; args=() ;;
-                "5  僅 IG 後置輸出") title="AfterRAW｜僅 IG 後置輸出"; args=(--ig) ;;
-                "6  僅 FB 後置輸出") title="AfterRAW｜僅 FB 後置輸出"; args=(--fb) ;;
+                "1  重新修圖")
+                    confirm_redo "$target" || continue
+                    title="AfterRAW｜重新修圖"; args=(--redo)
+                    ;;
+                "2  前置作業") title="AfterRAW｜前置作業"; args=(--pre) ;;
+                "3  載入 RAW") title="AfterRAW｜載入 RAW"; args=(--load-raw) ;;
+                "4  開啟 PSD 檔案") title="AfterRAW｜開啟 PSD 檔案"; args=(--open-psd) ;;
+                "5  IG＋FB 後置輸出") title="AfterRAW｜IG＋FB 後置輸出"; args=() ;;
+                "6  僅 IG 後置輸出") title="AfterRAW｜僅 IG 後置輸出"; args=(--ig) ;;
+                "7  僅 FB 後置輸出") title="AfterRAW｜僅 FB 後置輸出"; args=(--fb) ;;
                 "0  重新選擇專案") break ;;
                 "9  返回主選單") return 0 ;;
                 *) continue ;;
