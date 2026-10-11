@@ -1,0 +1,209 @@
+#!/usr/bin/env bash
+
+if [ -z "${BASH_VERSION:-}" ] || shopt -oq posix; then
+    exec /bin/bash "$0" "$@"
+fi
+
+set -u
+
+ENTRYPOINT="${BASH_SOURCE[0]}"
+if [ -L "$ENTRYPOINT" ]; then
+    LINK_TARGET=$(readlink "$ENTRYPOINT")
+    if [[ "$LINK_TARGET" = /* ]]; then
+        ENTRYPOINT="$LINK_TARGET"
+    else
+        ENTRYPOINT="$(cd "$(dirname "$ENTRYPOINT")" && pwd)/$LINK_TARGET"
+    fi
+fi
+
+SCRIPT_DIR=$(cd "$(dirname "$ENTRYPOINT")" && pwd)
+GUM_BIN="${KAIROS_GUM_BIN:-gum}"
+ORGANIZE_SCRIPT="${KAIROS_ORGANIZE_SCRIPT:-$SCRIPT_DIR/organize_raw_by_date.sh}"
+RENAME_SCRIPT="${KAIROS_RENAME_SCRIPT:-$SCRIPT_DIR/rename_raw.sh}"
+AFTERRAW_SCRIPT="${KAIROS_AFTERRAW_SCRIPT:-$SCRIPT_DIR/afterraw.sh}"
+PHOTO_ROOT="${KAIROS_PHOTO_ROOT:-/Users/robbie/Dropbox/__攝影}"
+LAST_STATUS=0
+SELECTED_TARGET=""
+
+trap 'exit 130' INT
+
+style() {
+    "$GUM_BIN" style "$@"
+}
+
+header() {
+    style \
+        --border rounded \
+        --border-foreground 212 \
+        --foreground 255 \
+        --padding "1 4" \
+        --margin "1 0" \
+        --align center \
+        "KAIROS  •  IMAGE WORKFLOW"
+}
+
+clear_screen() {
+    if [ -t 1 ]; then
+        clear
+    fi
+}
+
+pause_for_dashboard() {
+    printf '\n按 Enter 返回儀表板'
+    IFS= read -r _ || true
+}
+
+run_worker() {
+    local pause_mode="dashboard"
+    local title
+    local status
+
+    if [ "${1:-}" = "--return-menu" ]; then
+        pause_mode="menu"
+        shift
+    fi
+
+    title="$1"
+    shift
+
+    clear_screen
+    header
+    style --foreground 212 --bold "$title"
+    printf '\n'
+
+    "$@"
+    status=$?
+    LAST_STATUS=$status
+
+    printf '\n'
+    if [ "$status" -eq 0 ]; then
+        style --foreground 42 --bold "✓ 程序完成"
+    else
+        style --foreground 196 --bold "✗ 程序失敗（exit ${status}）"
+    fi
+    if [ "$pause_mode" = "dashboard" ]; then
+        pause_for_dashboard
+    fi
+}
+
+photo_projects() {
+    local project
+    local modified
+
+    for project in "$PHOTO_ROOT"/*; do
+        [ -d "$project" ] || continue
+        modified=$(find "$project" -type f \( \
+            -iname '*.arw' -o -iname '*.raw' -o -iname '*.dng' -o \
+            -iname '*.cr2' -o -iname '*.cr3' -o -iname '*.nef' -o \
+            -iname '*.orf' -o -iname '*.raf' -o -iname '*.rw2' -o \
+            -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.tif' -o \
+            -iname '*.tiff' -o -iname '*.png' -o -iname '*.heic' \
+            \) -exec stat -f '%m' {} + \
+            | awk '$1 > latest { latest = $1 } END { printf "%.0f", latest }')
+        printf '%s\t%s\n' "$modified" "${project##*/}"
+    done | LC_ALL=C sort -t $'\t' -k1,1nr -k2 | cut -f2-
+}
+
+choose_photo_target() {
+    local project
+    local -a projects=()
+
+    SELECTED_TARGET=""
+    clear_screen
+    header
+    style --foreground 245 "依照片修改時間由新到舊排列"
+    while IFS= read -r project; do
+        projects+=("$project")
+    done < <(photo_projects)
+    if [ "${#projects[@]}" -eq 0 ]; then
+        style --foreground 196 "找不到攝影專案：$PHOTO_ROOT"
+        pause_for_dashboard
+        return 1
+    fi
+
+    SELECTED_TARGET=$("$GUM_BIN" choose --header "選擇修圖專案" --height 15 \
+        -- "${projects[@]}" "0  返回主選單") || return 1
+    [ -n "$SELECTED_TARGET" ] && [ "$SELECTED_TARGET" != "0  返回主選單" ]
+}
+
+afterraw_menu() {
+    local choice
+    local target
+    local title
+    local -a args
+
+    while true; do
+        choose_photo_target || return 0
+        target="$SELECTED_TARGET"
+        while true; do
+            clear_screen
+            header
+            choice=$("$GUM_BIN" choose --header "專案：$target" --height 8 -- \
+                "1  前置作業" \
+                "2  載入 RAW" \
+                "3  開啟 PSD 檔案" \
+                "4  IG＋FB 後置輸出" \
+                "5  僅 IG 後置輸出" \
+                "6  僅 FB 後置輸出" \
+                "0  重新選擇專案" \
+                "9  返回主選單") || break
+
+            case "$choice" in
+                "1  前置作業") title="AfterRAW｜前置作業"; args=(--pre) ;;
+                "2  載入 RAW") title="AfterRAW｜載入 RAW"; args=(--load-raw) ;;
+                "3  開啟 PSD 檔案") title="AfterRAW｜開啟 PSD 檔案"; args=(--open-psd) ;;
+                "4  IG＋FB 後置輸出") title="AfterRAW｜IG＋FB 後置輸出"; args=() ;;
+                "5  僅 IG 後置輸出") title="AfterRAW｜僅 IG 後置輸出"; args=(--ig) ;;
+                "6  僅 FB 後置輸出") title="AfterRAW｜僅 FB 後置輸出"; args=(--fb) ;;
+                "0  重新選擇專案") break ;;
+                "9  返回主選單") return 0 ;;
+                *) continue ;;
+            esac
+
+            args+=("$target")
+
+            run_worker --return-menu "$title" /bin/bash "$AFTERRAW_SCRIPT" "${args[@]}"
+        done
+    done
+}
+
+main() {
+    local choice
+
+    if [ "$#" -ne 0 ]; then
+        printf 'kairos 不接受參數；請直接輸入 kairos 開啟儀表板。\n' >&2
+        return 64
+    fi
+
+    if ! command -v "$GUM_BIN" > /dev/null 2>&1; then
+        printf '找不到 gum，請先執行：brew install gum\n' >&2
+        return 127
+    fi
+
+    while true; do
+        clear_screen
+        header
+        choice=$("$GUM_BIN" choose --header "選擇要進行的程序" --height 4 -- \
+            "1  傳輸記憶卡 RAW 檔案" \
+            "2  轉移 RAW 檔案" \
+            "3  修圖" \
+            "0  離開") || return "$LAST_STATUS"
+
+        case "$choice" in
+            "1  傳輸記憶卡 RAW 檔案")
+                run_worker "傳輸記憶卡 RAW 檔案" /bin/bash "$ORGANIZE_SCRIPT"
+                ;;
+            "2  轉移 RAW 檔案")
+                run_worker "轉移 RAW 檔案" /bin/bash "$RENAME_SCRIPT"
+                ;;
+            "3  修圖")
+                afterraw_menu
+                ;;
+            "0  離開")
+                return "$LAST_STATUS"
+                ;;
+        esac
+    done
+}
+
+main "$@"
