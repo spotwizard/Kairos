@@ -198,6 +198,9 @@ write_dashboard_mocks() {
     touch -t 202608010000 "$mock_dir/photos/Stone House/RAW/photo.ARW" "$mock_dir/photos/Stone House/RAW/photo2.raw"
     touch -t 202608160000 "$mock_dir/photos/New Project/IG/photo.JpEg"
     touch -t 202608200000 "$mock_dir/photos/Stone House/RAW/photo.xmp" "$mock_dir/photos/Stone House"
+    mkdir -p "$mock_dir/photos/Stone House/PSD"
+    touch -t 202608010000 "$mock_dir/photos/Stone House/PSD/photo.psd" "$mock_dir/photos/Stone House/PSD/other.PSD" \
+        "$mock_dir/photos/Stone House/PSD/notes.txt"
     # 隱藏目錄與攝影目錄根層的照片都不是專案，不應出現在專案清單
     mkdir -p "$mock_dir/photos/.cache/RAW"
     touch -t 202608250000 "$mock_dir/photos/.cache/RAW/hidden.ARW" "$mock_dir/photos/loose.jpg"
@@ -422,6 +425,15 @@ test_dashboard() {
         || fail "多選 RAW 重新修圖的確認訊息應列出所有檔名"
 
     reset_dashboard_log
+    set_input_queue "3" "2" "4" "2,3" "esc" "esc" "esc"
+    run_dashboard || fail "AfterRAW 指定 PSD 開啟執行失敗"
+    expect_dashboard_call $'afterraw-worker\t--open-psd\t--file\tother.PSD\t--file\tphoto.psd\tStone House'
+    [ "$(sed -n '4p' "$TEST_ROOT/dashboard/menus.log")" = $'專案：Stone House｜開啟 PSD 檔案｜選擇 PSD 檔案\t全部 PSD 檔案\tother.PSD\tphoto.psd' ] \
+        || fail "開啟 PSD 檔案應列出 PSD 目錄內的 .psd 檔名，而不是 RAW 檔名"
+    grep -F "AfterRAW｜開啟 PSD 檔案｜2 個 PSD 檔案" "$TEST_ROOT/dashboard/output.log" > /dev/null \
+        || fail "多選 PSD 時程序標題應顯示 PSD 檔案數量"
+
+    reset_dashboard_log
     set_input_queue "3" "2" "5" "1,3" "esc" "esc" "esc"
     run_dashboard || fail "AfterRAW 勾選全部 RAW 執行失敗"
     expect_dashboard_call $'afterraw-worker\tStone House'
@@ -496,7 +508,7 @@ test_afterraw_file_arguments() {
     if output=$(/bin/bash "$ROOT/afterraw.sh" --pre --file ../20260815_IMG0001.ARW "專案" 2>&1); then
         fail "--file 包含路徑應該失敗"
     fi
-    [[ "$output" = *"--file 必須是 RAW 目錄內的 .ARW 或 .RAW 檔名"* ]] || fail "未回報 --file 格式錯誤：$output"
+    [[ "$output" = *"--file 必須是檔名，不能包含路徑"* ]] || fail "未回報 --file 格式錯誤：$output"
 
     if output=$(/bin/bash "$ROOT/afterraw.sh" --pre --file 20260815_IMG0001.ARW --file 20260815_IMG0002.xmp "專案" 2>&1); then
         fail "多個 --file 中有非 RAW 檔應該失敗"
@@ -507,6 +519,11 @@ test_afterraw_file_arguments() {
         fail "--file 指定非 RAW 檔應該失敗"
     fi
     [[ "$output" = *"--file 必須是 RAW 目錄內的 .ARW 或 .RAW 檔名"* ]] || fail "未回報 --file 副檔名錯誤：$output"
+
+    if output=$(/bin/bash "$ROOT/afterraw.sh" --open-psd --file 20260815_IMG0001.ARW "專案" 2>&1); then
+        fail "開啟 PSD 時 --file 指定 RAW 檔應該失敗"
+    fi
+    [[ "$output" = *"--open-psd 的 --file 必須是 PSD 目錄內的 .psd 檔名"* ]] || fail "未回報開啟 PSD 的 --file 副檔名錯誤：$output"
 }
 
 test_multi_select() {

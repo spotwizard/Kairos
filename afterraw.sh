@@ -42,7 +42,7 @@ while [ "$#" -gt 0 ]; do
             ;;
         --file)
             if [ "$#" -lt 2 ]; then
-                echo "錯誤：--file 後面必須提供 RAW 檔名"
+                echo "錯誤：--file 後面必須提供檔名"
                 exit 1
             fi
             RAW_FILE_NAMES+=("$2")
@@ -65,7 +65,17 @@ fi
 
 if [ "$FILE_SPECIFIED" = true ]; then
     for raw_file_name in "${RAW_FILE_NAMES[@]}"; do
-        if [ -z "$raw_file_name" ] || [[ "$raw_file_name" = */* ]] || ! [[ "$raw_file_name" =~ \.([Aa][Rr][Ww]|[Rr][Aa][Ww])$ ]]; then
+        if [ -z "$raw_file_name" ] || [[ "$raw_file_name" = */* ]]; then
+            echo "錯誤：--file 必須是檔名，不能包含路徑"
+            exit 1
+        fi
+        # 開啟 PSD 模式的 --file 是 PSD 目錄內的檔名，其他模式是 RAW 目錄內的檔名
+        if [ "$DO_OPEN_PSD" = true ]; then
+            if ! [[ "$raw_file_name" =~ \.[Pp][Ss][Dd]$ ]]; then
+                echo "錯誤：--open-psd 的 --file 必須是 PSD 目錄內的 .psd 檔名"
+                exit 1
+            fi
+        elif ! [[ "$raw_file_name" =~ \.([Aa][Rr][Ww]|[Rr][Aa][Ww])$ ]]; then
             echo "錯誤：--file 必須是 RAW 目錄內的 .ARW 或 .RAW 檔名（不含路徑）"
             exit 1
         fi
@@ -109,7 +119,7 @@ if [ -z "$FOLDER_NAME" ]; then
     echo "  重新修圖: $0 --redo [--file RAW檔名] <資料夾名稱>"
     echo "  前置作業: $0 --pre [--date YYYYMMDD | --file RAW檔名] <資料夾名稱>"
     echo "  載入 RAW: $0 --load-raw [--date YYYYMMDD | --file RAW檔名] <資料夾名稱|RAW目錄路徑>"
-    echo "  開啟 PSD 檔案: $0 --open-psd [--file RAW檔名] <資料夾名稱>"
+    echo "  開啟 PSD 檔案: $0 --open-psd [--file PSD檔名] <資料夾名稱>"
     echo "  後置輸出: $0 [--ig] [--fb] [--date YYYYMMDD | --file RAW檔名] <資料夾名稱>"
     exit 1
 fi
@@ -1460,14 +1470,13 @@ if [ "$DO_OPEN_PSD" = true ]; then
     fi
 
     if [ "$FILE_SPECIFIED" = true ]; then
-        for raw_file_name in "${RAW_FILE_NAMES[@]}"; do
-            raw_file_base="${raw_file_name%.*}"
-            if [ ! -f "$PSD_DIR/${raw_file_base}.psd" ]; then
-                echo "⊘ 找不到 ${raw_file_name} 對應的 PSD 檔案，略過"
+        for psd_file_name in "${RAW_FILE_NAMES[@]}"; do
+            if [ ! -f "$PSD_DIR/$psd_file_name" ]; then
+                echo "⊘ 找不到 PSD 檔案，略過：$psd_file_name"
                 continue
             fi
-            PSD_FILES_FOUND+=("$PSD_DIR/${raw_file_base}.psd")
-            echo "找到 PSD 檔案：${raw_file_base}.psd"
+            PSD_FILES_FOUND+=("$PSD_DIR/$psd_file_name")
+            echo "找到 PSD 檔案：$psd_file_name"
         done
     else
         while IFS= read -r -d '' psd_file; do
@@ -1478,7 +1487,7 @@ if [ "$DO_OPEN_PSD" = true ]; then
 
     if [ ${#PSD_FILES_FOUND[@]} -eq 0 ]; then
         if [ "$FILE_SPECIFIED" = true ]; then
-            echo "錯誤：指定的 RAW 都沒有對應的 PSD 檔案"
+            echo "錯誤：找不到指定的 PSD 檔案"
             exit 1
         fi
         echo "沒有找到 .psd 檔案"
