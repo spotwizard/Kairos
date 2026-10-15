@@ -196,15 +196,14 @@ afterraw_menu() {
         while true; do
             clear_screen
             header
-            choice=$("$GUM_BIN" choose --header "專案：${target}（ESC 返回專案清單）" --height 8 -- \
+            choice=$("$GUM_BIN" choose --header "專案：${target}（ESC 返回專案清單）" --height 7 -- \
                 "1  重新修圖" \
                 "2  前置作業" \
                 "3  載入 RAW" \
                 "4  開啟 PSD 檔案" \
                 "5  IG＋FB 後置輸出" \
                 "6  僅 IG 後置輸出" \
-                "7  僅 FB 後置輸出" \
-                "0  重新選擇專案") || break
+                "7  僅 FB 後置輸出") || break
 
             case "$choice" in
                 "1  重新修圖") title="AfterRAW｜重新修圖"; args=(--redo) ;;
@@ -214,7 +213,6 @@ afterraw_menu() {
                 "5  IG＋FB 後置輸出") title="AfterRAW｜IG＋FB 後置輸出"; args=() ;;
                 "6  僅 IG 後置輸出") title="AfterRAW｜僅 IG 後置輸出"; args=(--ig) ;;
                 "7  僅 FB 後置輸出") title="AfterRAW｜僅 FB 後置輸出"; args=(--fb) ;;
-                "0  重新選擇專案") break ;;
                 *) continue ;;
             esac
 

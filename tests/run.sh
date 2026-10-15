@@ -325,9 +325,9 @@ test_dashboard() {
     expect_dashboard_call $'afterraw-worker\t--pre\tNew Project'
     [ "$(sed -n '2p' "$TEST_ROOT/dashboard/menus.log")" = $'選擇修圖專案（ESC 返回主選單）\tNew Project\tStone House\tEmpty' ] \
         || fail "應先列出專案，依照片修改時間排序，忽略上次專案、目錄及 XMP 的修改時間"
-    [ "$(sed -n '3p' "$TEST_ROOT/dashboard/menus.log")" = $'專案：New Project（ESC 返回專案清單）\t1  重新修圖\t2  前置作業\t3  載入 RAW\t4  開啟 PSD 檔案\t5  IG＋FB 後置輸出\t6  僅 IG 後置輸出\t7  僅 FB 後置輸出\t0  重新選擇專案' ] \
+    [ "$(sed -n '3p' "$TEST_ROOT/dashboard/menus.log")" = $'專案：New Project（ESC 返回專案清單）\t1  重新修圖\t2  前置作業\t3  載入 RAW\t4  開啟 PSD 檔案\t5  IG＋FB 後置輸出\t6  僅 IG 後置輸出\t7  僅 FB 後置輸出' ] \
         || fail "選定專案後的操作選項不符"
-    [ "$(sed -n '4p' "$TEST_ROOT/dashboard/menus.log")" = $'專案：New Project（ESC 返回專案清單）\t1  重新修圖\t2  前置作業\t3  載入 RAW\t4  開啟 PSD 檔案\t5  IG＋FB 後置輸出\t6  僅 IG 後置輸出\t7  僅 FB 後置輸出\t0  重新選擇專案' ] \
+    [ "$(sed -n '4p' "$TEST_ROOT/dashboard/menus.log")" = $'專案：New Project（ESC 返回專案清單）\t1  重新修圖\t2  前置作業\t3  載入 RAW\t4  開啟 PSD 檔案\t5  IG＋FB 後置輸出\t6  僅 IG 後置輸出\t7  僅 FB 後置輸出' ] \
         || fail "AfterRAW 程序完成後應自動返回目前專案的操作選單"
     ! grep -F "按 Enter 返回儀表板" "$TEST_ROOT/dashboard/output.log" > /dev/null \
         || fail "AfterRAW 程序完成後不應要求按 Enter 返回儀表板"
@@ -391,8 +391,8 @@ test_dashboard() {
         || fail "專案清單按 ESC 應返回主選單"
 
     reset_dashboard_log
-    set_input_queue "3" "1" "8" "2" "6" "1" "esc" "esc" "4"
-    run_dashboard || fail "重新選擇專案失敗"
+    set_input_queue "3" "1" "esc" "2" "6" "1" "esc" "esc" "4"
+    run_dashboard || fail "操作選單 ESC 後重新選擇專案失敗"
     expect_dashboard_call $'afterraw-worker\t--ig\tStone House'
     [ "$(wc -l < "$TEST_ROOT/dashboard/menus.log" | tr -d ' ')" = 9 ] \
         || fail "重新選擇專案應再次顯示專案與操作選單"
