@@ -24,6 +24,9 @@ AFTERRAW_SCRIPT="${KAIROS_AFTERRAW_SCRIPT:-$SCRIPT_DIR/afterraw.sh}"
 PHOTO_ROOT="${KAIROS_PHOTO_ROOT:-/Users/robbie/Dropbox/__攝影}"
 LAST_STATUS=0
 SELECTED_TARGET=""
+SELECTED_RAW=""
+RAW_ALL_OPTION="全部 RAW 檔案"
+RAW_BACK_OPTION="0  返回操作選單"
 
 trap 'exit 130' INT
 
@@ -126,11 +129,60 @@ choose_photo_target() {
     [ -n "$SELECTED_TARGET" ] && [ "$SELECTED_TARGET" != "0  返回主選單" ]
 }
 
+project_raw_files() {
+    local raw_dir="$PHOTO_ROOT/$1/RAW"
+    local file
+    local name
+
+    [ -d "$raw_dir" ] || return 0
+    for file in "$raw_dir"/*; do
+        [ -f "$file" ] || continue
+        name="${file##*/}"
+        case "$name" in
+            *.[Aa][Rr][Ww]|*.[Rr][Aa][Ww]) printf '%s\n' "$name" ;;
+        esac
+    done | LC_ALL=C sort
+}
+
+# 選擇要處理的 RAW 檔：SELECTED_RAW 為空字串代表全部；回傳 1 代表返回操作選單
+choose_raw_file() {
+    local target="$1"
+    local operation="$2"
+    local name
+    local choice
+    local -a raw_files=()
+
+    SELECTED_RAW=""
+    while IFS= read -r name; do
+        raw_files+=("$name")
+    done < <(project_raw_files "$target")
+    # 沒有 RAW 檔時直接以全部模式執行，由 worker 回報找不到檔案
+    [ "${#raw_files[@]}" -gt 0 ] || return 0
+
+    clear_screen
+    header
+    choice=$("$GUM_BIN" choose --header "專案：$target｜${operation}｜選擇 RAW 檔案" --height 15 \
+        -- "$RAW_ALL_OPTION" "${raw_files[@]}" "$RAW_BACK_OPTION") || return 1
+
+    case "$choice" in
+        "$RAW_ALL_OPTION") SELECTED_RAW="" ;;
+        "$RAW_BACK_OPTION"|"") return 1 ;;
+        *) SELECTED_RAW="$choice" ;;
+    esac
+}
+
 confirm_redo() {
     local target="$1"
+    local raw_file="$2"
+    local message
 
-    "$GUM_BIN" confirm --default=false --affirmative "確定" --negative "取消" \
-        "重新修圖會刪除「${target}」RAW 目錄下的 .xmp、.acr 檔案及 PSD、IG、FB 目錄，確定要繼續嗎？"
+    if [ -n "$raw_file" ]; then
+        message="重新修圖會刪除「${target}」中 ${raw_file} 的 .xmp、.acr 檔案及對應的 PSD、IG、FB 成品，確定要繼續嗎？"
+    else
+        message="重新修圖會刪除「${target}」RAW 目錄下的 .xmp、.acr 檔案及 PSD、IG、FB 目錄，確定要繼續嗎？"
+    fi
+
+    "$GUM_BIN" confirm --default=false --affirmative "確定" --negative "取消" "$message"
 }
 
 afterraw_menu() {
@@ -157,10 +209,7 @@ afterraw_menu() {
                 "9  返回主選單") || break
 
             case "$choice" in
-                "1  重新修圖")
-                    confirm_redo "$target" || continue
-                    title="AfterRAW｜重新修圖"; args=(--redo)
-                    ;;
+                "1  重新修圖") title="AfterRAW｜重新修圖"; args=(--redo) ;;
                 "2  前置作業") title="AfterRAW｜前置作業"; args=(--pre) ;;
                 "3  載入 RAW") title="AfterRAW｜載入 RAW"; args=(--load-raw) ;;
                 "4  開啟 PSD 檔案") title="AfterRAW｜開啟 PSD 檔案"; args=(--open-psd) ;;
@@ -172,6 +221,14 @@ afterraw_menu() {
                 *) continue ;;
             esac
 
+            choose_raw_file "$target" "${choice#*  }" || continue
+            if [ "${args[0]:-}" = "--redo" ]; then
+                confirm_redo "$target" "$SELECTED_RAW" || continue
+            fi
+            if [ -n "$SELECTED_RAW" ]; then
+                args+=(--file "$SELECTED_RAW")
+                title="${title}｜${SELECTED_RAW}"
+            fi
             args+=("$target")
 
             run_worker --return-menu "$title" /bin/bash "$AFTERRAW_SCRIPT" "${args[@]}"

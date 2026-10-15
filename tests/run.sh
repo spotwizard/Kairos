@@ -324,29 +324,55 @@ test_dashboard() {
         || fail "AfterRAW 程序完成後不應要求按 Enter 返回儀表板"
 
     reset_dashboard_log
-    set_input_queue "3" "2" "3" "9" "4"
+    set_input_queue "3" "2" "3" "1" "9" "4"
     run_dashboard || fail "AfterRAW 載入選單執行失敗"
     expect_dashboard_call $'afterraw-worker\t--load-raw\tStone House'
 
     reset_dashboard_log
-    set_input_queue "3" "2" "4" "9" "4"
+    set_input_queue "3" "2" "4" "1" "9" "4"
     run_dashboard || fail "AfterRAW 開啟 PSD 選單執行失敗"
     expect_dashboard_call $'afterraw-worker\t--open-psd\tStone House'
 
     reset_dashboard_log
-    set_input_queue "3" "2" "5" "9" "4"
+    set_input_queue "3" "2" "5" "1" "9" "4"
     run_dashboard || fail "AfterRAW IG＋FB 選單執行失敗"
     expect_dashboard_call $'afterraw-worker\tStone House'
 
     reset_dashboard_log
-    set_input_queue "3" "2" "6" "9" "4"
+    set_input_queue "3" "2" "6" "1" "9" "4"
     run_dashboard || fail "AfterRAW IG 選單執行失敗"
     expect_dashboard_call $'afterraw-worker\t--ig\tStone House'
 
     reset_dashboard_log
-    set_input_queue "3" "2" "7" "9" "4"
+    set_input_queue "3" "2" "7" "1" "9" "4"
     run_dashboard || fail "AfterRAW FB 選單執行失敗"
     expect_dashboard_call $'afterraw-worker\t--fb\tStone House'
+
+    reset_dashboard_log
+    set_input_queue "3" "2" "3" "2" "9" "4"
+    run_dashboard || fail "AfterRAW 指定 RAW 載入執行失敗"
+    expect_dashboard_call $'afterraw-worker\t--load-raw\t--file\tphoto.ARW\tStone House'
+    [ "$(sed -n '4p' "$TEST_ROOT/dashboard/menus.log")" = $'專案：Stone House｜載入 RAW｜選擇 RAW 檔案\t全部 RAW 檔案\tphoto.ARW\t0  返回操作選單' ] \
+        || fail "RAW 檔案選單應列出全部選項、RAW 檔名與返回選項，且不列出 sidecar"
+
+    reset_dashboard_log
+    set_input_queue "3" "2" "7" "2" "9" "4"
+    run_dashboard || fail "AfterRAW 指定 RAW FB 輸出執行失敗"
+    expect_dashboard_call $'afterraw-worker\t--fb\t--file\tphoto.ARW\tStone House'
+
+    reset_dashboard_log
+    set_input_queue "3" "2" "1" "2" "y" "9" "4"
+    run_dashboard || fail "AfterRAW 指定 RAW 重新修圖執行失敗"
+    expect_dashboard_call $'afterraw-worker\t--redo\t--file\tphoto.ARW\tStone House'
+    grep -F "photo.ARW 的 .xmp、.acr 檔案" "$TEST_ROOT/dashboard/menus.log" > /dev/null \
+        || fail "指定 RAW 重新修圖的確認訊息應寫出檔名"
+
+    reset_dashboard_log
+    set_input_queue "3" "2" "3" "3" "9" "4"
+    run_dashboard || fail "RAW 檔案選單返回操作選單失敗"
+    [ ! -s "$TEST_ROOT/dashboard/workers.log" ] || fail "RAW 檔案選單返回時不應執行 worker"
+    [ "$(sed -n '5p' "$TEST_ROOT/dashboard/menus.log" | cut -f1)" = "專案：Stone House" ] \
+        || fail "RAW 檔案選單返回後應回到目前專案的操作選單"
 
     reset_dashboard_log
     set_input_queue "3" "4" "4"
@@ -354,10 +380,10 @@ test_dashboard() {
     [ ! -s "$TEST_ROOT/dashboard/workers.log" ] || fail "取消選單不應執行 worker"
 
     reset_dashboard_log
-    set_input_queue "3" "1" "8" "2" "6" "9" "4"
+    set_input_queue "3" "1" "8" "2" "6" "1" "9" "4"
     run_dashboard || fail "重新選擇專案失敗"
     expect_dashboard_call $'afterraw-worker\t--ig\tStone House'
-    [ "$(wc -l < "$TEST_ROOT/dashboard/menus.log" | tr -d ' ')" = 7 ] \
+    [ "$(wc -l < "$TEST_ROOT/dashboard/menus.log" | tr -d ' ')" = 8 ] \
         || fail "重新選擇專案應再次顯示專案與操作選單"
 
     reset_dashboard_log
@@ -396,8 +422,28 @@ test_afterraw_redo_arguments() {
     [[ "$output" = *"--redo 是獨立重新修圖模式"* ]] || fail "未回報 --redo 參數衝突：$output"
 }
 
+test_afterraw_file_arguments() {
+    local output
+
+    if output=$(/bin/bash "$ROOT/afterraw.sh" --pre --file 20260815_IMG0001.ARW --date 20260815 "專案" 2>&1); then
+        fail "--file 搭配 --date 應該失敗"
+    fi
+    [[ "$output" = *"--file 不能與 --date 同時使用"* ]] || fail "未回報 --file 參數衝突：$output"
+
+    if output=$(/bin/bash "$ROOT/afterraw.sh" --pre --file ../20260815_IMG0001.ARW "專案" 2>&1); then
+        fail "--file 包含路徑應該失敗"
+    fi
+    [[ "$output" = *"--file 必須是 RAW 目錄內的 .ARW 或 .RAW 檔名"* ]] || fail "未回報 --file 格式錯誤：$output"
+
+    if output=$(/bin/bash "$ROOT/afterraw.sh" --pre --file 20260815_IMG0001.xmp "專案" 2>&1); then
+        fail "--file 指定非 RAW 檔應該失敗"
+    fi
+    [[ "$output" = *"--file 必須是 RAW 目錄內的 .ARW 或 .RAW 檔名"* ]] || fail "未回報 --file 副檔名錯誤：$output"
+}
+
 test_syntax
 test_afterraw_redo_arguments
+test_afterraw_file_arguments
 test_organize_raw_by_date
 test_rename_raw
 test_dashboard
