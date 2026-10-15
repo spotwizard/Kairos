@@ -91,20 +91,52 @@ run_worker() {
 
 photo_projects() {
     local project
-    local modified
 
-    for project in "$PHOTO_ROOT"/*; do
-        [ -d "$project" ] || continue
-        modified=$(find "$project" -type f \( \
+    # 整個攝影目錄只搜尋一次，再依專案取照片的最新修改時間；
+    # 以 D 開頭的列是專案目錄本身，讓沒有照片的專案也會列出（排在最後）
+    {
+        for project in "$PHOTO_ROOT"/*; do
+            [ -d "$project" ] && printf 'D %s/\n' "$project"
+        done
+        find "$PHOTO_ROOT" -mindepth 2 -type f \( \
             -iname '*.arw' -o -iname '*.raw' -o -iname '*.dng' -o \
             -iname '*.cr2' -o -iname '*.cr3' -o -iname '*.nef' -o \
             -iname '*.orf' -o -iname '*.raf' -o -iname '*.rw2' -o \
             -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.tif' -o \
             -iname '*.tiff' -o -iname '*.png' -o -iname '*.heic' \
-            \) -exec stat -f '%m' {} + \
-            | awk '$1 > latest { latest = $1 } END { printf "%.0f", latest }')
-        printf '%s\t%s\n' "$modified" "${project##*/}"
-    done | LC_ALL=C sort -t $'\t' -k1,1nr -k2 | cut -f2-
+            \) -exec stat -f '%m %N' {} +
+    } | KAIROS_PHOTO_ROOT_PREFIX="$PHOTO_ROOT/" awk '
+        BEGIN {
+            root = ENVIRON["KAIROS_PHOTO_ROOT_PREFIX"]
+            root_length = length(root)
+        }
+        {
+            space = index($0, " ")
+            mtime = substr($0, 1, space - 1)
+            path = substr($0, space + 1)
+            if (substr(path, 1, root_length) != root) {
+                next
+            }
+            rest = substr(path, root_length + 1)
+            project = substr(rest, 1, index(rest, "/") - 1)
+            if (project == "") {
+                next
+            }
+            if (mtime == "D") {
+                listed[project] = 1
+                if (!(project in latest)) {
+                    latest[project] = 0
+                }
+            } else if (!(project in latest) || mtime + 0 > latest[project]) {
+                latest[project] = mtime + 0
+            }
+        }
+        END {
+            for (project in listed) {
+                printf "%.0f\t%s\n", latest[project], project
+            }
+        }
+    ' | LC_ALL=C sort -t $'\t' -k1,1nr -k2 | cut -f2-
 }
 
 choose_photo_target() {

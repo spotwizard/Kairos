@@ -198,6 +198,9 @@ write_dashboard_mocks() {
     touch -t 202608010000 "$mock_dir/photos/Stone House/RAW/photo.ARW" "$mock_dir/photos/Stone House/RAW/photo2.raw"
     touch -t 202608160000 "$mock_dir/photos/New Project/IG/photo.JpEg"
     touch -t 202608200000 "$mock_dir/photos/Stone House/RAW/photo.xmp" "$mock_dir/photos/Stone House"
+    # 隱藏目錄與攝影目錄根層的照片都不是專案，不應出現在專案清單
+    mkdir -p "$mock_dir/photos/.cache/RAW"
+    touch -t 202608250000 "$mock_dir/photos/.cache/RAW/hidden.ARW" "$mock_dir/photos/loose.jpg"
     printf 'Stone House\n' > "$mock_dir/current_photo_edit_dir"
     cat > "$mock_dir/gum" <<'MOCK'
 #!/usr/bin/env bash
