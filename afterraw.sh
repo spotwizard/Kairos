@@ -15,7 +15,7 @@ DO_IG=false
 DO_FB=false
 DATE_PREFIX=""
 DATE_SPECIFIED=false
-RAW_FILE_NAME=""
+RAW_FILE_NAMES=()
 FILE_SPECIFIED=false
 FOLDER_NAME=""
 
@@ -45,12 +45,12 @@ while [ "$#" -gt 0 ]; do
                 echo "錯誤：--file 後面必須提供 RAW 檔名"
                 exit 1
             fi
-            RAW_FILE_NAME="$2"
+            RAW_FILE_NAMES+=("$2")
             FILE_SPECIFIED=true
             shift
             ;;
         --file=*)
-            RAW_FILE_NAME="${1#--file=}"
+            RAW_FILE_NAMES+=("${1#--file=}")
             FILE_SPECIFIED=true
             ;;
         *) FOLDER_NAME="$1" ;;
@@ -64,16 +64,17 @@ if [ "$DATE_SPECIFIED" = true ] && ! [[ "$DATE_PREFIX" =~ ^[0-9]{8}$ ]]; then
 fi
 
 if [ "$FILE_SPECIFIED" = true ]; then
-    if [ -z "$RAW_FILE_NAME" ] || [[ "$RAW_FILE_NAME" = */* ]] || ! [[ "$RAW_FILE_NAME" =~ \.([Aa][Rr][Ww]|[Rr][Aa][Ww])$ ]]; then
-        echo "錯誤：--file 必須是 RAW 目錄內的 .ARW 或 .RAW 檔名（不含路徑）"
-        exit 1
-    fi
+    for raw_file_name in "${RAW_FILE_NAMES[@]}"; do
+        if [ -z "$raw_file_name" ] || [[ "$raw_file_name" = */* ]] || ! [[ "$raw_file_name" =~ \.([Aa][Rr][Ww]|[Rr][Aa][Ww])$ ]]; then
+            echo "錯誤：--file 必須是 RAW 目錄內的 .ARW 或 .RAW 檔名（不含路徑）"
+            exit 1
+        fi
+    done
     if [ "$DATE_SPECIFIED" = true ]; then
         echo "錯誤：--file 不能與 --date 同時使用"
         exit 1
     fi
 fi
-RAW_FILE_BASE="${RAW_FILE_NAME%.*}"
 
 if [ "$DO_REDO" = true ] && { [ "$DO_LOAD_RAW" = true ] || [ "$DO_OPEN_PSD" = true ] || [ "$DO_IG" = true ] || [ "$DO_FB" = true ] || [ "$DATE_SPECIFIED" = true ]; }; then
     echo "錯誤：--redo 是獨立重新修圖模式，不能與 --load-raw、--open-psd、--ig、--fb 或 --date 同時使用"
@@ -152,10 +153,14 @@ if [ "$DO_OPEN_PSD" = false ] && [ ! -d "$RAW_DIR" ]; then
     exit 1
 fi
 
-if [ "$DO_OPEN_PSD" = false ] && [ "$FILE_SPECIFIED" = true ] && [ ! -f "$RAW_DIR/$RAW_FILE_NAME" ]; then
-    echo "錯誤：找不到指定的 RAW 檔案"
-    echo "路徑：$RAW_DIR/$RAW_FILE_NAME"
-    exit 1
+if [ "$DO_OPEN_PSD" = false ] && [ "$FILE_SPECIFIED" = true ]; then
+    for raw_file_name in "${RAW_FILE_NAMES[@]}"; do
+        if [ ! -f "$RAW_DIR/$raw_file_name" ]; then
+            echo "錯誤：找不到指定的 RAW 檔案"
+            echo "路徑：$RAW_DIR/$raw_file_name"
+            exit 1
+        fi
+    done
 fi
 
 if [ "$DO_OPEN_PSD" = true ]; then
@@ -1391,22 +1396,25 @@ write_current_photo_edit_dir() {
 # 重新修圖：清除 RAW 目錄的 Camera Raw sidecar 與 PSD、IG、FB 目錄，再執行前置作業
 if [ "$DO_REDO" = true ] && [ "$FILE_SPECIFIED" = true ]; then
     echo ""
-    echo "開始重新修圖：清除 ${RAW_FILE_NAME} 的 Camera Raw 設定與輸出成品..."
+    echo "開始重新修圖：清除指定 ${#RAW_FILE_NAMES[@]} 個 RAW 的 Camera Raw 設定與輸出成品..."
 
-    for redo_file in \
-        "$RAW_DIR/${RAW_FILE_BASE}.xmp" \
-        "$RAW_DIR/${RAW_FILE_BASE}.acr" \
-        "$TARGET_DIR/PSD/${RAW_FILE_BASE}.psd" \
-        "$TARGET_DIR/IG/${RAW_FILE_BASE}.jpg" \
-        "$TARGET_DIR/FB/${RAW_FILE_BASE}.jpg"; do
-        if [ ! -e "$redo_file" ]; then
-            continue
-        fi
-        if ! rm -f -- "$redo_file"; then
-            echo "✗ 無法刪除：$redo_file"
-            exit 1
-        fi
-        echo "✓ 刪除：$redo_file"
+    for raw_file_name in "${RAW_FILE_NAMES[@]}"; do
+        raw_file_base="${raw_file_name%.*}"
+        for redo_file in \
+            "$RAW_DIR/${raw_file_base}.xmp" \
+            "$RAW_DIR/${raw_file_base}.acr" \
+            "$TARGET_DIR/PSD/${raw_file_base}.psd" \
+            "$TARGET_DIR/IG/${raw_file_base}.jpg" \
+            "$TARGET_DIR/FB/${raw_file_base}.jpg"; do
+            if [ ! -e "$redo_file" ]; then
+                continue
+            fi
+            if ! rm -f -- "$redo_file"; then
+                echo "✗ 無法刪除：$redo_file"
+                exit 1
+            fi
+            echo "✓ 刪除：$redo_file"
+        done
     done
 elif [ "$DO_REDO" = true ]; then
     REDO_SIDECAR_COUNT=0
@@ -1452,13 +1460,15 @@ if [ "$DO_OPEN_PSD" = true ]; then
     fi
 
     if [ "$FILE_SPECIFIED" = true ]; then
-        if [ ! -f "$PSD_DIR/${RAW_FILE_BASE}.psd" ]; then
-            echo "錯誤：找不到 ${RAW_FILE_NAME} 對應的 PSD 檔案"
-            echo "路徑：$PSD_DIR/${RAW_FILE_BASE}.psd"
-            exit 1
-        fi
-        PSD_FILES_FOUND+=("$PSD_DIR/${RAW_FILE_BASE}.psd")
-        echo "找到 PSD 檔案：${RAW_FILE_BASE}.psd"
+        for raw_file_name in "${RAW_FILE_NAMES[@]}"; do
+            raw_file_base="${raw_file_name%.*}"
+            if [ ! -f "$PSD_DIR/${raw_file_base}.psd" ]; then
+                echo "⊘ 找不到 ${raw_file_name} 對應的 PSD 檔案，略過"
+                continue
+            fi
+            PSD_FILES_FOUND+=("$PSD_DIR/${raw_file_base}.psd")
+            echo "找到 PSD 檔案：${raw_file_base}.psd"
+        done
     else
         while IFS= read -r -d '' psd_file; do
             PSD_FILES_FOUND+=("$psd_file")
@@ -1467,6 +1477,10 @@ if [ "$DO_OPEN_PSD" = true ]; then
     fi
 
     if [ ${#PSD_FILES_FOUND[@]} -eq 0 ]; then
+        if [ "$FILE_SPECIFIED" = true ]; then
+            echo "錯誤：指定的 RAW 都沒有對應的 PSD 檔案"
+            exit 1
+        fi
         echo "沒有找到 .psd 檔案"
         exit 0
     fi
@@ -1483,8 +1497,10 @@ if [ "$DO_OPEN_PSD" = true ]; then
 fi
 
 if [ "$FILE_SPECIFIED" = true ]; then
-    RAW_FILES_FOUND+=("$RAW_DIR/$RAW_FILE_NAME")
-    echo "指定 RAW 檔案：$RAW_FILE_NAME"
+    for raw_file_name in "${RAW_FILE_NAMES[@]}"; do
+        RAW_FILES_FOUND+=("$RAW_DIR/$raw_file_name")
+        echo "指定 RAW 檔案：$raw_file_name"
+    done
 else
     # 搜尋 .ARW 檔案
     while IFS= read -r -d '' arw_file; do
@@ -1687,7 +1703,7 @@ if [ "$DO_IG" = true ]; then
     echo "IG 輸出資料夾：$IG_DIR"
 fi
 
-# 指定單一 RAW 時，其他 RAW 的輸出檔不在處理範圍內，不做孤兒輸出清理
+# 指定 RAW 時，其他 RAW 的輸出檔不在處理範圍內，不做孤兒輸出清理
 if [ "$FILE_SPECIFIED" = false ]; then
     echo ""
     echo "開始清理無對應 RAW 的輸出檔..."

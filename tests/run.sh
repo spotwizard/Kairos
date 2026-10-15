@@ -193,7 +193,7 @@ write_dashboard_mocks() {
     local mock_dir="$TEST_ROOT/dashboard"
 
     mkdir -p "$mock_dir/photos/Stone House/RAW" "$mock_dir/photos/New Project/IG" "$mock_dir/photos/Empty"
-    touch -t 202608010000 "$mock_dir/photos/Stone House/RAW/photo.ARW"
+    touch -t 202608010000 "$mock_dir/photos/Stone House/RAW/photo.ARW" "$mock_dir/photos/Stone House/RAW/photo2.raw"
     touch -t 202608160000 "$mock_dir/photos/New Project/IG/photo.JpEg"
     touch -t 202608200000 "$mock_dir/photos/Stone House/RAW/photo.xmp" "$mock_dir/photos/Stone House"
     printf 'Stone House\n' > "$mock_dir/current_photo_edit_dir"
@@ -206,10 +206,12 @@ case "$command_name" in
     style) printf '%s\n' "${!#}" ;;
     choose)
         header=""
+        no_limit=false
         while [ "$#" -gt 0 ]; do
             case "$1" in
                 --header) header="$2"; shift 2 ;;
                 --height) shift 2 ;;
+                --no-limit) no_limit=true; shift ;;
                 --) shift; break ;;
                 *) exit 2 ;;
             esac
@@ -218,15 +220,26 @@ case "$command_name" in
         printf '\t%s' "$@" >> "$KAIROS_MENU_LOG"
         printf '\n' >> "$KAIROS_MENU_LOG"
         IFS= read -r selection || exit 130
-        index=1
-        for option in "$@"; do
-            if [ "$selection" = "$index" ]; then
-                printf '%s\n' "$option"
-                exit 0
-            fi
-            index=$((index + 1))
+        # 多選時以逗號分隔序號，例如 2,3；none 代表沒有勾選任何項目就按 Enter
+        if [ "$no_limit" = true ] && [ "$selection" = "none" ]; then
+            exit 0
+        fi
+        if [ "$no_limit" = false ] && [[ "$selection" = *,* ]]; then
+            exit 2
+        fi
+        found=false
+        IFS=',' read -r -a picks <<< "$selection"
+        for pick in "${picks[@]}"; do
+            index=1
+            for option in "$@"; do
+                if [ "$pick" = "$index" ]; then
+                    printf '%s\n' "$option"
+                    found=true
+                fi
+                index=$((index + 1))
+            done
         done
-        exit 130
+        [ "$found" = true ] || exit 130
         ;;
     confirm)
         printf 'confirm' >> "$KAIROS_MENU_LOG"
@@ -361,7 +374,7 @@ test_dashboard() {
     set_input_queue "3" "2" "3" "2" "esc" "esc" "esc"
     run_dashboard || fail "AfterRAW 指定 RAW 載入執行失敗"
     expect_dashboard_call $'afterraw-worker\t--load-raw\t--file\tphoto.ARW\tStone House'
-    [ "$(sed -n '4p' "$TEST_ROOT/dashboard/menus.log")" = $'專案：Stone House｜載入 RAW｜選擇 RAW 檔案（ESC 返回操作選單）\t全部 RAW 檔案\tphoto.ARW' ] \
+    [ "$(sed -n '4p' "$TEST_ROOT/dashboard/menus.log")" = $'專案：Stone House｜載入 RAW｜選擇 RAW 檔案（空白鍵勾選、Enter 確認、ESC 返回操作選單）\t全部 RAW 檔案\tphoto.ARW\tphoto2.raw' ] \
         || fail "RAW 檔案選單應列出全部選項與 RAW 檔名，以 ESC 返回，且不列出 sidecar"
 
     reset_dashboard_log
@@ -375,6 +388,32 @@ test_dashboard() {
     expect_dashboard_call $'afterraw-worker\t--redo\t--file\tphoto.ARW\tStone House'
     grep -F "photo.ARW 的 .xmp、.acr 檔案" "$TEST_ROOT/dashboard/menus.log" > /dev/null \
         || fail "指定 RAW 重新修圖的確認訊息應寫出檔名"
+
+    reset_dashboard_log
+    set_input_queue "3" "2" "3" "2,3" "esc" "esc" "esc"
+    run_dashboard || fail "AfterRAW 多選 RAW 載入執行失敗"
+    expect_dashboard_call $'afterraw-worker\t--load-raw\t--file\tphoto.ARW\t--file\tphoto2.raw\tStone House'
+    grep -F "AfterRAW｜載入 RAW｜2 個 RAW 檔案" "$TEST_ROOT/dashboard/output.log" > /dev/null \
+        || fail "多選 RAW 時程序標題應顯示檔案數量"
+
+    reset_dashboard_log
+    set_input_queue "3" "2" "1" "2,3" "y" "esc" "esc" "esc"
+    run_dashboard || fail "AfterRAW 多選 RAW 重新修圖執行失敗"
+    expect_dashboard_call $'afterraw-worker\t--redo\t--file\tphoto.ARW\t--file\tphoto2.raw\tStone House'
+    grep -F "photo.ARW、photo2.raw 的 .xmp、.acr 檔案" "$TEST_ROOT/dashboard/menus.log" > /dev/null \
+        || fail "多選 RAW 重新修圖的確認訊息應列出所有檔名"
+
+    reset_dashboard_log
+    set_input_queue "3" "2" "5" "1,3" "esc" "esc" "esc"
+    run_dashboard || fail "AfterRAW 勾選全部 RAW 執行失敗"
+    expect_dashboard_call $'afterraw-worker\tStone House'
+
+    reset_dashboard_log
+    set_input_queue "3" "2" "3" "none" "3" "esc" "esc" "esc"
+    run_dashboard || fail "未勾選 RAW 後重新選擇失敗"
+    expect_dashboard_call $'afterraw-worker\t--load-raw\t--file\tphoto2.raw\tStone House'
+    [ "$(cut -f1 "$TEST_ROOT/dashboard/menus.log" | grep -c '選擇 RAW 檔案')" = 2 ] \
+        || fail "沒有勾選任何 RAW 就按 Enter 時應重新顯示 RAW 檔案選單"
 
     reset_dashboard_log
     set_input_queue "3" "2" "3" "esc" "esc" "esc" "esc"
@@ -447,6 +486,11 @@ test_afterraw_file_arguments() {
         fail "--file 包含路徑應該失敗"
     fi
     [[ "$output" = *"--file 必須是 RAW 目錄內的 .ARW 或 .RAW 檔名"* ]] || fail "未回報 --file 格式錯誤：$output"
+
+    if output=$(/bin/bash "$ROOT/afterraw.sh" --pre --file 20260815_IMG0001.ARW --file 20260815_IMG0002.xmp "專案" 2>&1); then
+        fail "多個 --file 中有非 RAW 檔應該失敗"
+    fi
+    [[ "$output" = *"--file 必須是 RAW 目錄內的 .ARW 或 .RAW 檔名"* ]] || fail "未檢查每一個 --file：$output"
 
     if output=$(/bin/bash "$ROOT/afterraw.sh" --pre --file 20260815_IMG0001.xmp "專案" 2>&1); then
         fail "--file 指定非 RAW 檔應該失敗"

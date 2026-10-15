@@ -24,7 +24,7 @@ AFTERRAW_SCRIPT="${KAIROS_AFTERRAW_SCRIPT:-$SCRIPT_DIR/afterraw.sh}"
 PHOTO_ROOT="${KAIROS_PHOTO_ROOT:-/Users/robbie/Dropbox/__攝影}"
 LAST_STATUS=0
 SELECTED_TARGET=""
-SELECTED_RAW=""
+SELECTED_RAWS=()
 RAW_ALL_OPTION="全部 RAW 檔案"
 
 trap 'exit 130' INT
@@ -143,40 +143,60 @@ project_raw_files() {
     done | LC_ALL=C sort
 }
 
-# 選擇要處理的 RAW 檔：SELECTED_RAW 為空字串代表全部；按 ESC 回傳 1，代表返回操作選單
-choose_raw_file() {
+# 選擇要處理的 RAW 檔（可多選）：SELECTED_RAWS 為空代表全部；按 ESC 回傳 1，代表返回操作選單
+choose_raw_files() {
     local target="$1"
     local operation="$2"
     local name
     local choice
     local -a raw_files=()
 
-    SELECTED_RAW=""
+    SELECTED_RAWS=()
     while IFS= read -r name; do
         raw_files+=("$name")
     done < <(project_raw_files "$target")
     # 沒有 RAW 檔時直接以全部模式執行，由 worker 回報找不到檔案
     [ "${#raw_files[@]}" -gt 0 ] || return 0
 
-    clear_screen
-    header
-    choice=$("$GUM_BIN" choose --header "專案：${target}｜${operation}｜選擇 RAW 檔案（ESC 返回操作選單）" --height 15 \
-        -- "$RAW_ALL_OPTION" "${raw_files[@]}") || return 1
+    while true; do
+        clear_screen
+        header
+        choice=$("$GUM_BIN" choose --no-limit \
+            --header "專案：${target}｜${operation}｜選擇 RAW 檔案（空白鍵勾選、Enter 確認、ESC 返回操作選單）" \
+            --height 15 -- "$RAW_ALL_OPTION" "${raw_files[@]}") || return 1
 
-    case "$choice" in
-        "$RAW_ALL_OPTION") SELECTED_RAW="" ;;
-        "") return 1 ;;
-        *) SELECTED_RAW="$choice" ;;
-    esac
+        while IFS= read -r name; do
+            [ -n "$name" ] || continue
+            if [ "$name" = "$RAW_ALL_OPTION" ]; then
+                SELECTED_RAWS=()
+                return 0
+            fi
+            SELECTED_RAWS+=("$name")
+        done <<< "$choice"
+        # 沒有勾選任何項目就按 Enter 時，重新顯示清單
+        [ "${#SELECTED_RAWS[@]}" -eq 0 ] || return 0
+    done
+}
+
+selected_raws_label() {
+    if [ "${#SELECTED_RAWS[@]}" -eq 1 ]; then
+        printf '%s' "${SELECTED_RAWS[0]}"
+    else
+        printf '%s 個 RAW 檔案' "${#SELECTED_RAWS[@]}"
+    fi
 }
 
 confirm_redo() {
     local target="$1"
-    local raw_file="$2"
     local message
+    local names=""
+    local name
 
-    if [ -n "$raw_file" ]; then
-        message="重新修圖會刪除「${target}」中 ${raw_file} 的 .xmp、.acr 檔案及對應的 PSD、IG、FB 成品，確定要繼續嗎？"
+    if [ "${#SELECTED_RAWS[@]}" -gt 0 ]; then
+        for name in "${SELECTED_RAWS[@]}"; do
+            names="${names:+${names}、}${name}"
+        done
+        message="重新修圖會刪除「${target}」中 ${names} 的 .xmp、.acr 檔案及對應的 PSD、IG、FB 成品，確定要繼續嗎？"
     else
         message="重新修圖會刪除「${target}」RAW 目錄下的 .xmp、.acr 檔案及 PSD、IG、FB 目錄，確定要繼續嗎？"
     fi
@@ -188,6 +208,7 @@ afterraw_menu() {
     local choice
     local target
     local title
+    local raw_name
     local -a args
 
     while true; do
@@ -216,13 +237,15 @@ afterraw_menu() {
                 *) continue ;;
             esac
 
-            choose_raw_file "$target" "${choice#*  }" || continue
+            choose_raw_files "$target" "${choice#*  }" || continue
             if [ "${args[0]:-}" = "--redo" ]; then
-                confirm_redo "$target" "$SELECTED_RAW" || continue
+                confirm_redo "$target" || continue
             fi
-            if [ -n "$SELECTED_RAW" ]; then
-                args+=(--file "$SELECTED_RAW")
-                title="${title}｜${SELECTED_RAW}"
+            if [ "${#SELECTED_RAWS[@]}" -gt 0 ]; then
+                for raw_name in "${SELECTED_RAWS[@]}"; do
+                    args+=(--file "$raw_name")
+                done
+                title="${title}｜$(selected_raws_label)"
             fi
             args+=("$target")
 
