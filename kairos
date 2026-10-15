@@ -247,11 +247,10 @@ main() {
     while true; do
         clear_screen
         header
-        choice=$("$GUM_BIN" choose --header "選擇要進行的程序" --height 4 -- \
+        choice=$("$GUM_BIN" choose --header "選擇要進行的程序（ESC 離開）" --height 3 -- \
             "1  傳輸記憶卡 RAW 檔案" \
             "2  轉移 RAW 檔案" \
-            "3  修圖" \
-            "0  離開") || return "$LAST_STATUS"
+            "3  修圖") || return "$LAST_STATUS"
 
         case "$choice" in
             "1  傳輸記憶卡 RAW 檔案")
@@ -262,9 +261,6 @@ main() {
                 ;;
             "3  修圖")
                 afterraw_menu
-                ;;
-            "0  離開")
-                return "$LAST_STATUS"
                 ;;
         esac
     done
