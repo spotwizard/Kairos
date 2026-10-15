@@ -161,7 +161,7 @@ choose_raw_file() {
 
     clear_screen
     header
-    choice=$("$GUM_BIN" choose --header "專案：$target｜${operation}｜選擇 RAW 檔案" --height 15 \
+    choice=$("$GUM_BIN" choose --header "專案：${target}｜${operation}｜選擇 RAW 檔案" --height 15 \
         -- "$RAW_ALL_OPTION" "${raw_files[@]}" "$RAW_BACK_OPTION") || return 1
 
     case "$choice" in

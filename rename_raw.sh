@@ -21,7 +21,7 @@ find "$SOURCE_DIR" -type d | while read -r subdir; do
             continue
         fi
         
-        echo "轉移 RAW 檔案：$subdir 找到 $total_files 個 RAW 檔案（ARW: $arw_count, DNG: $dng_count, CR2: $cr2_count），開始轉移..."
+        echo "轉移 RAW 檔案：$subdir 找到 $total_files 個 RAW 檔案（ARW: $arw_count, DNG: $dng_count, CR2: ${cr2_count}），開始轉移..."
         
         TARGET_DIR="/Users/robbie/Dropbox/__攝影/${store_name}"
         mkdir -p "$TARGET_DIR/RAW"

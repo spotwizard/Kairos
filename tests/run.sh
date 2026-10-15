@@ -26,6 +26,15 @@ test_syntax() {
         "$ROOT/rename_raw.sh" \
         "$ROOT/afterraw.sh" \
         "$ROOT/tests/run.sh" || fail "Shell 語法檢查未通過"
+
+    # macOS 內建 bash 3.2 會把緊接在 $變數 後面的中文字元當成變數名稱的一部分，必須寫成 ${變數}
+    if LC_ALL=C grep -n $'\\$[A-Za-z_][A-Za-z0-9_]*[\x80-\xff]' \
+        "$ROOT/kairos" \
+        "$ROOT/organize_raw_by_date.sh" \
+        "$ROOT/rename_raw.sh" \
+        "$ROOT/afterraw.sh"; then
+        fail "變數後面緊接非 ASCII 字元時必須加大括號"
+    fi
 }
 
 test_organize_raw_by_date() {

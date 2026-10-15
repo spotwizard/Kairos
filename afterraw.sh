@@ -126,7 +126,7 @@ fi
 
 # 檢查目標資料夾是否存在
 if [ ! -d "$TARGET_DIR" ]; then
-    echo "錯誤：找不到資料夾「$FOLDER_NAME」"
+    echo "錯誤：找不到資料夾「${FOLDER_NAME}」"
     echo "路徑：$TARGET_DIR"
     exit 1
 fi
