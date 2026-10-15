@@ -123,9 +123,9 @@ choose_photo_target() {
         return 1
     fi
 
-    SELECTED_TARGET=$("$GUM_BIN" choose --header "選擇修圖專案" --height 15 \
-        -- "${projects[@]}" "0  返回主選單") || return 1
-    [ -n "$SELECTED_TARGET" ] && [ "$SELECTED_TARGET" != "0  返回主選單" ]
+    SELECTED_TARGET=$("$GUM_BIN" choose --header "選擇修圖專案（ESC 返回主選單）" --height 15 \
+        -- "${projects[@]}") || return 1
+    [ -n "$SELECTED_TARGET" ]
 }
 
 project_raw_files() {
@@ -196,7 +196,7 @@ afterraw_menu() {
         while true; do
             clear_screen
             header
-            choice=$("$GUM_BIN" choose --header "專案：$target" --height 9 -- \
+            choice=$("$GUM_BIN" choose --header "專案：${target}（ESC 返回專案清單）" --height 8 -- \
                 "1  重新修圖" \
                 "2  前置作業" \
                 "3  載入 RAW" \
@@ -204,8 +204,7 @@ afterraw_menu() {
                 "5  IG＋FB 後置輸出" \
                 "6  僅 IG 後置輸出" \
                 "7  僅 FB 後置輸出" \
-                "0  重新選擇專案" \
-                "9  返回主選單") || break
+                "0  重新選擇專案") || break
 
             case "$choice" in
                 "1  重新修圖") title="AfterRAW｜重新修圖"; args=(--redo) ;;
@@ -216,7 +215,6 @@ afterraw_menu() {
                 "6  僅 IG 後置輸出") title="AfterRAW｜僅 IG 後置輸出"; args=(--ig) ;;
                 "7  僅 FB 後置輸出") title="AfterRAW｜僅 FB 後置輸出"; args=(--fb) ;;
                 "0  重新選擇專案") break ;;
-                "9  返回主選單") return 0 ;;
                 *) continue ;;
             esac
 

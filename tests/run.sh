@@ -308,91 +308,93 @@ test_dashboard() {
     expect_dashboard_call "rename-worker"
 
     reset_dashboard_log
-    set_input_queue "3" "1" "1" "y" "9" "4"
+    set_input_queue "3" "1" "1" "y" "esc" "esc" "4"
     run_dashboard || fail "AfterRAW 重新修圖選單執行失敗"
     expect_dashboard_call $'afterraw-worker\t--redo\tNew Project'
     grep -F $'confirm\t--default=false' "$TEST_ROOT/dashboard/menus.log" > /dev/null \
         || fail "重新修圖執行前應要求確認，且預設為取消"
 
     reset_dashboard_log
-    set_input_queue "3" "1" "1" "n" "9" "4"
+    set_input_queue "3" "1" "1" "n" "esc" "esc" "4"
     run_dashboard || fail "取消重新修圖後返回選單失敗"
     [ ! -s "$TEST_ROOT/dashboard/workers.log" ] || fail "取消重新修圖不應執行 worker"
 
     reset_dashboard_log
-    set_input_queue "3" "1" "2" "9" "4"
+    set_input_queue "3" "1" "2" "esc" "esc" "4"
     run_dashboard || fail "AfterRAW 前置選單執行失敗"
     expect_dashboard_call $'afterraw-worker\t--pre\tNew Project'
-    [ "$(sed -n '2p' "$TEST_ROOT/dashboard/menus.log")" = $'選擇修圖專案\tNew Project\tStone House\tEmpty\t0  返回主選單' ] \
+    [ "$(sed -n '2p' "$TEST_ROOT/dashboard/menus.log")" = $'選擇修圖專案（ESC 返回主選單）\tNew Project\tStone House\tEmpty' ] \
         || fail "應先列出專案，依照片修改時間排序，忽略上次專案、目錄及 XMP 的修改時間"
-    [ "$(sed -n '3p' "$TEST_ROOT/dashboard/menus.log")" = $'專案：New Project\t1  重新修圖\t2  前置作業\t3  載入 RAW\t4  開啟 PSD 檔案\t5  IG＋FB 後置輸出\t6  僅 IG 後置輸出\t7  僅 FB 後置輸出\t0  重新選擇專案\t9  返回主選單' ] \
+    [ "$(sed -n '3p' "$TEST_ROOT/dashboard/menus.log")" = $'專案：New Project（ESC 返回專案清單）\t1  重新修圖\t2  前置作業\t3  載入 RAW\t4  開啟 PSD 檔案\t5  IG＋FB 後置輸出\t6  僅 IG 後置輸出\t7  僅 FB 後置輸出\t0  重新選擇專案' ] \
         || fail "選定專案後的操作選項不符"
-    [ "$(sed -n '4p' "$TEST_ROOT/dashboard/menus.log")" = $'專案：New Project\t1  重新修圖\t2  前置作業\t3  載入 RAW\t4  開啟 PSD 檔案\t5  IG＋FB 後置輸出\t6  僅 IG 後置輸出\t7  僅 FB 後置輸出\t0  重新選擇專案\t9  返回主選單' ] \
+    [ "$(sed -n '4p' "$TEST_ROOT/dashboard/menus.log")" = $'專案：New Project（ESC 返回專案清單）\t1  重新修圖\t2  前置作業\t3  載入 RAW\t4  開啟 PSD 檔案\t5  IG＋FB 後置輸出\t6  僅 IG 後置輸出\t7  僅 FB 後置輸出\t0  重新選擇專案' ] \
         || fail "AfterRAW 程序完成後應自動返回目前專案的操作選單"
     ! grep -F "按 Enter 返回儀表板" "$TEST_ROOT/dashboard/output.log" > /dev/null \
         || fail "AfterRAW 程序完成後不應要求按 Enter 返回儀表板"
 
     reset_dashboard_log
-    set_input_queue "3" "2" "3" "1" "9" "4"
+    set_input_queue "3" "2" "3" "1" "esc" "esc" "4"
     run_dashboard || fail "AfterRAW 載入選單執行失敗"
     expect_dashboard_call $'afterraw-worker\t--load-raw\tStone House'
 
     reset_dashboard_log
-    set_input_queue "3" "2" "4" "1" "9" "4"
+    set_input_queue "3" "2" "4" "1" "esc" "esc" "4"
     run_dashboard || fail "AfterRAW 開啟 PSD 選單執行失敗"
     expect_dashboard_call $'afterraw-worker\t--open-psd\tStone House'
 
     reset_dashboard_log
-    set_input_queue "3" "2" "5" "1" "9" "4"
+    set_input_queue "3" "2" "5" "1" "esc" "esc" "4"
     run_dashboard || fail "AfterRAW IG＋FB 選單執行失敗"
     expect_dashboard_call $'afterraw-worker\tStone House'
 
     reset_dashboard_log
-    set_input_queue "3" "2" "6" "1" "9" "4"
+    set_input_queue "3" "2" "6" "1" "esc" "esc" "4"
     run_dashboard || fail "AfterRAW IG 選單執行失敗"
     expect_dashboard_call $'afterraw-worker\t--ig\tStone House'
 
     reset_dashboard_log
-    set_input_queue "3" "2" "7" "1" "9" "4"
+    set_input_queue "3" "2" "7" "1" "esc" "esc" "4"
     run_dashboard || fail "AfterRAW FB 選單執行失敗"
     expect_dashboard_call $'afterraw-worker\t--fb\tStone House'
 
     reset_dashboard_log
-    set_input_queue "3" "2" "3" "2" "9" "4"
+    set_input_queue "3" "2" "3" "2" "esc" "esc" "4"
     run_dashboard || fail "AfterRAW 指定 RAW 載入執行失敗"
     expect_dashboard_call $'afterraw-worker\t--load-raw\t--file\tphoto.ARW\tStone House'
     [ "$(sed -n '4p' "$TEST_ROOT/dashboard/menus.log")" = $'專案：Stone House｜載入 RAW｜選擇 RAW 檔案（ESC 返回操作選單）\t全部 RAW 檔案\tphoto.ARW' ] \
         || fail "RAW 檔案選單應列出全部選項與 RAW 檔名，以 ESC 返回，且不列出 sidecar"
 
     reset_dashboard_log
-    set_input_queue "3" "2" "7" "2" "9" "4"
+    set_input_queue "3" "2" "7" "2" "esc" "esc" "4"
     run_dashboard || fail "AfterRAW 指定 RAW FB 輸出執行失敗"
     expect_dashboard_call $'afterraw-worker\t--fb\t--file\tphoto.ARW\tStone House'
 
     reset_dashboard_log
-    set_input_queue "3" "2" "1" "2" "y" "9" "4"
+    set_input_queue "3" "2" "1" "2" "y" "esc" "esc" "4"
     run_dashboard || fail "AfterRAW 指定 RAW 重新修圖執行失敗"
     expect_dashboard_call $'afterraw-worker\t--redo\t--file\tphoto.ARW\tStone House'
     grep -F "photo.ARW 的 .xmp、.acr 檔案" "$TEST_ROOT/dashboard/menus.log" > /dev/null \
         || fail "指定 RAW 重新修圖的確認訊息應寫出檔名"
 
     reset_dashboard_log
-    set_input_queue "3" "2" "3" "esc" "9" "4"
+    set_input_queue "3" "2" "3" "esc" "esc" "esc" "4"
     run_dashboard || fail "RAW 檔案選單按 ESC 返回操作選單失敗"
     [ ! -s "$TEST_ROOT/dashboard/workers.log" ] || fail "RAW 檔案選單返回時不應執行 worker"
-    [ "$(sed -n '5p' "$TEST_ROOT/dashboard/menus.log" | cut -f1)" = "專案：Stone House" ] \
+    [ "$(sed -n '5p' "$TEST_ROOT/dashboard/menus.log" | cut -f1)" = "專案：Stone House（ESC 返回專案清單）" ] \
         || fail "RAW 檔案選單返回後應回到目前專案的操作選單"
 
     reset_dashboard_log
-    set_input_queue "3" "4" "4"
+    set_input_queue "3" "esc" "4"
     run_dashboard || fail "AfterRAW 取消返回失敗"
     [ ! -s "$TEST_ROOT/dashboard/workers.log" ] || fail "取消選單不應執行 worker"
+    [ "$(cut -f1 "$TEST_ROOT/dashboard/menus.log" | tr '\n' '|')" = "選擇要進行的程序|選擇修圖專案（ESC 返回主選單）|選擇要進行的程序|" ] \
+        || fail "專案清單按 ESC 應返回主選單"
 
     reset_dashboard_log
-    set_input_queue "3" "1" "8" "2" "6" "1" "9" "4"
+    set_input_queue "3" "1" "8" "2" "6" "1" "esc" "esc" "4"
     run_dashboard || fail "重新選擇專案失敗"
     expect_dashboard_call $'afterraw-worker\t--ig\tStone House'
-    [ "$(wc -l < "$TEST_ROOT/dashboard/menus.log" | tr -d ' ')" = 8 ] \
+    [ "$(wc -l < "$TEST_ROOT/dashboard/menus.log" | tr -d ' ')" = 9 ] \
         || fail "重新選擇專案應再次顯示專案與操作選單"
 
     reset_dashboard_log
@@ -401,9 +403,11 @@ test_dashboard() {
     [ ! -s "$TEST_ROOT/dashboard/workers.log" ] || fail "尚未選定專案不應執行 worker"
 
     reset_dashboard_log
-    set_input_queue "3" "1" "cancel" "4" "4"
+    set_input_queue "3" "1" "esc" "esc" "4"
     run_dashboard || fail "取消操作後返回專案清單失敗"
     [ ! -s "$TEST_ROOT/dashboard/workers.log" ] || fail "尚未選定操作不應執行 worker"
+    [ "$(cut -f1 "$TEST_ROOT/dashboard/menus.log" | tr '\n' '|')" = "選擇要進行的程序|選擇修圖專案（ESC 返回主選單）|專案：New Project（ESC 返回專案清單）|選擇修圖專案（ESC 返回主選單）|選擇要進行的程序|" ] \
+        || fail "操作選單按 ESC 應返回專案清單，專案清單再按 ESC 返回主選單"
 
     mv "$TEST_ROOT/dashboard/photos" "$TEST_ROOT/dashboard/saved-photos"
     reset_dashboard_log
