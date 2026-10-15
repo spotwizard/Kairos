@@ -25,6 +25,7 @@ test_syntax() {
         "$ROOT/organize_raw_by_date.sh" \
         "$ROOT/rename_raw.sh" \
         "$ROOT/afterraw.sh" \
+        "$ROOT/multi_select.sh" \
         "$ROOT/tests/run.sh" || fail "Shell 語法檢查未通過"
 
     # macOS 內建 bash 3.2 會把緊接在 $變數 後面的中文字元當成變數名稱的一部分，必須寫成 ${變數}
@@ -32,7 +33,8 @@ test_syntax() {
         "$ROOT/kairos" \
         "$ROOT/organize_raw_by_date.sh" \
         "$ROOT/rename_raw.sh" \
-        "$ROOT/afterraw.sh"; then
+        "$ROOT/afterraw.sh" \
+        "$ROOT/multi_select.sh"; then
         fail "變數後面緊接非 ASCII 字元時必須加大括號"
     fi
 }
@@ -206,12 +208,10 @@ case "$command_name" in
     style) printf '%s\n' "${!#}" ;;
     choose)
         header=""
-        no_limit=false
         while [ "$#" -gt 0 ]; do
             case "$1" in
                 --header) header="$2"; shift 2 ;;
                 --height) shift 2 ;;
-                --no-limit) no_limit=true; shift ;;
                 --) shift; break ;;
                 *) exit 2 ;;
             esac
@@ -220,26 +220,15 @@ case "$command_name" in
         printf '\t%s' "$@" >> "$KAIROS_MENU_LOG"
         printf '\n' >> "$KAIROS_MENU_LOG"
         IFS= read -r selection || exit 130
-        # 多選時以逗號分隔序號，例如 2,3；none 代表沒有勾選任何項目就按 Enter
-        if [ "$no_limit" = true ] && [ "$selection" = "none" ]; then
-            exit 0
-        fi
-        if [ "$no_limit" = false ] && [[ "$selection" = *,* ]]; then
-            exit 2
-        fi
-        found=false
-        IFS=',' read -r -a picks <<< "$selection"
-        for pick in "${picks[@]}"; do
-            index=1
-            for option in "$@"; do
-                if [ "$pick" = "$index" ]; then
-                    printf '%s\n' "$option"
-                    found=true
-                fi
-                index=$((index + 1))
-            done
+        index=1
+        for option in "$@"; do
+            if [ "$selection" = "$index" ]; then
+                printf '%s\n' "$option"
+                exit 0
+            fi
+            index=$((index + 1))
         done
-        [ "$found" = true ] || exit 130
+        exit 130
         ;;
     confirm)
         printf 'confirm' >> "$KAIROS_MENU_LOG"
@@ -252,6 +241,31 @@ case "$command_name" in
 esac
 MOCK
     chmod +x "$mock_dir/gum"
+
+    cat > "$mock_dir/multi-select" <<'MOCK'
+#!/usr/bin/env bash
+
+# 以逗號分隔序號模擬勾選，例如 2,3；其他輸入視為按 Esc
+printf '%s' "$1" >> "$KAIROS_MENU_LOG"
+shift
+printf '\t%s' "$@" >> "$KAIROS_MENU_LOG"
+printf '\n' >> "$KAIROS_MENU_LOG"
+IFS= read -r selection || exit 1
+found=false
+IFS=',' read -r -a picks <<< "$selection"
+for pick in "${picks[@]}"; do
+    index=1
+    for option in "$@"; do
+        if [ "$pick" = "$index" ]; then
+            printf '%s\n' "$option"
+            found=true
+        fi
+        index=$((index + 1))
+    done
+done
+[ "$found" = true ] || exit 1
+MOCK
+    chmod +x "$mock_dir/multi-select"
 
     for worker in organize-worker rename-worker afterraw-worker; do
         cat > "$mock_dir/$worker" <<'MOCK'
@@ -283,6 +297,7 @@ run_dashboard() {
     KAIROS_ORGANIZE_SCRIPT="$TEST_ROOT/dashboard/organize-worker" \
     KAIROS_RENAME_SCRIPT="$TEST_ROOT/dashboard/rename-worker" \
     KAIROS_AFTERRAW_SCRIPT="$TEST_ROOT/dashboard/afterraw-worker" \
+    KAIROS_MULTI_SELECT_SCRIPT="$TEST_ROOT/dashboard/multi-select" \
     KAIROS_PHOTO_ROOT="$TEST_ROOT/dashboard/photos" \
     KAIROS_CURRENT_EDIT_FILE="$TEST_ROOT/dashboard/current_photo_edit_dir" \
     KAIROS_FAKE_STATUS="${KAIROS_FAKE_STATUS:-0}" \
@@ -374,7 +389,7 @@ test_dashboard() {
     set_input_queue "3" "2" "3" "2" "esc" "esc" "esc"
     run_dashboard || fail "AfterRAW 指定 RAW 載入執行失敗"
     expect_dashboard_call $'afterraw-worker\t--load-raw\t--file\tphoto.ARW\tStone House'
-    [ "$(sed -n '4p' "$TEST_ROOT/dashboard/menus.log")" = $'專案：Stone House｜載入 RAW｜選擇 RAW 檔案（空白鍵勾選、Enter 確認、ESC 返回操作選單）\t全部 RAW 檔案\tphoto.ARW\tphoto2.raw' ] \
+    [ "$(sed -n '4p' "$TEST_ROOT/dashboard/menus.log")" = $'專案：Stone House｜載入 RAW｜選擇 RAW 檔案\t全部 RAW 檔案\tphoto.ARW\tphoto2.raw' ] \
         || fail "RAW 檔案選單應列出全部選項與 RAW 檔名，以 ESC 返回，且不列出 sidecar"
 
     reset_dashboard_log
@@ -407,13 +422,6 @@ test_dashboard() {
     set_input_queue "3" "2" "5" "1,3" "esc" "esc" "esc"
     run_dashboard || fail "AfterRAW 勾選全部 RAW 執行失敗"
     expect_dashboard_call $'afterraw-worker\tStone House'
-
-    reset_dashboard_log
-    set_input_queue "3" "2" "3" "none" "3" "esc" "esc" "esc"
-    run_dashboard || fail "未勾選 RAW 後重新選擇失敗"
-    expect_dashboard_call $'afterraw-worker\t--load-raw\t--file\tphoto2.raw\tStone House'
-    [ "$(cut -f1 "$TEST_ROOT/dashboard/menus.log" | grep -c '選擇 RAW 檔案')" = 2 ] \
-        || fail "沒有勾選任何 RAW 就按 Enter 時應重新顯示 RAW 檔案選單"
 
     reset_dashboard_log
     set_input_queue "3" "2" "3" "esc" "esc" "esc" "esc"
@@ -498,7 +506,73 @@ test_afterraw_file_arguments() {
     [[ "$output" = *"--file 必須是 RAW 目錄內的 .ARW 或 .RAW 檔名"* ]] || fail "未回報 --file 副檔名錯誤：$output"
 }
 
+test_multi_select() {
+    if ! command -v python3 > /dev/null 2>&1; then
+        printf '略過多選清單按鍵測試：找不到 python3\n'
+        return 0
+    fi
+
+    python3 - "$ROOT/multi_select.sh" "$TEST_ROOT/multi_select.out" <<'PY' || fail "多選清單按鍵測試未通過"
+import os, pty, select, sys, time
+
+script, out_path = sys.argv[1], sys.argv[2]
+
+
+def drain(fd, seconds):
+    end = time.time() + seconds
+    while time.time() < end:
+        ready, _, _ = select.select([fd], [], [], 0.02)
+        if ready:
+            try:
+                os.read(fd, 4096)
+            except OSError:
+                return
+
+
+def run(keys, options, height="15"):
+    pid, fd = pty.fork()
+    if pid == 0:
+        os.environ["OUT"] = out_path
+        os.environ["KAIROS_MULTI_SELECT_HEIGHT"] = height
+        os.execv("/bin/bash", ["/bin/bash", "-c", 'exec /bin/bash "$0" "$@" > "$OUT"', script, "標題"] + options)
+    drain(fd, 0.5)
+    for key in keys:
+        os.write(fd, key)
+        drain(fd, 0.3)
+    end = time.time() + 3
+    while time.time() < end:
+        done, raw = os.waitpid(pid, os.WNOHANG)
+        if done:
+            with open(out_path) as output:
+                return raw >> 8, output.read()
+        drain(fd, 0.05)
+    os.kill(pid, 9)
+    os.waitpid(pid, 0)
+    return "timeout", ""
+
+
+DOWN, UP, ENTER, ESC, SPACE = b"\x1b[B", b"\x1b[A", b"\r", b"\x1b", b" "
+cases = [
+    ("沒有勾選就按 Enter 選定游標項目", [DOWN, ENTER], ["全部", "甲.ARW", "乙.ARW"], "15", (0, "甲.ARW\n")),
+    ("空白鍵勾選多個項目", [SPACE, DOWN, DOWN, SPACE, ENTER], ["全部", "甲.ARW", "乙.ARW"], "15", (0, "全部\n乙.ARW\n")),
+    ("再按一次空白鍵取消勾選", [SPACE, SPACE, DOWN, ENTER], ["全部", "甲.ARW", "乙.ARW"], "15", (0, "甲.ARW\n")),
+    ("向上移動循環到最後一項", [UP, ENTER], ["全部", "甲.ARW", "乙.ARW"], "15", (0, "乙.ARW\n")),
+    ("清單超過高度時捲動", [DOWN, DOWN, DOWN, ENTER], ["a", "b", "c", "d", "e"], "2", (0, "d\n")),
+    ("Esc 返回", [ESC], ["a", "b"], "15", (1, "")),
+    ("Ctrl+C 中止", [b"\x03"], ["a", "b"], "15", (130, "")),
+]
+failed = False
+for name, keys, options, height, expected in cases:
+    actual = run(keys, options, height)
+    if actual != expected:
+        failed = True
+        print(f"多選清單：{name}，預期 {expected!r}，實際 {actual!r}")
+sys.exit(1 if failed else 0)
+PY
+}
+
 test_syntax
+test_multi_select
 test_afterraw_redo_arguments
 test_afterraw_file_arguments
 test_organize_raw_by_date

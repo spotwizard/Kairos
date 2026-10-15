@@ -21,6 +21,7 @@ GUM_BIN="${KAIROS_GUM_BIN:-gum}"
 ORGANIZE_SCRIPT="${KAIROS_ORGANIZE_SCRIPT:-$SCRIPT_DIR/organize_raw_by_date.sh}"
 RENAME_SCRIPT="${KAIROS_RENAME_SCRIPT:-$SCRIPT_DIR/rename_raw.sh}"
 AFTERRAW_SCRIPT="${KAIROS_AFTERRAW_SCRIPT:-$SCRIPT_DIR/afterraw.sh}"
+MULTI_SELECT_SCRIPT="${KAIROS_MULTI_SELECT_SCRIPT:-$SCRIPT_DIR/multi_select.sh}"
 PHOTO_ROOT="${KAIROS_PHOTO_ROOT:-/Users/robbie/Dropbox/__攝影}"
 LAST_STATUS=0
 SELECTED_TARGET=""
@@ -158,24 +159,21 @@ choose_raw_files() {
     # 沒有 RAW 檔時直接以全部模式執行，由 worker 回報找不到檔案
     [ "${#raw_files[@]}" -gt 0 ] || return 0
 
-    while true; do
-        clear_screen
-        header
-        choice=$("$GUM_BIN" choose --no-limit \
-            --header "專案：${target}｜${operation}｜選擇 RAW 檔案（空白鍵勾選、Enter 確認、ESC 返回操作選單）" \
-            --height 15 -- "$RAW_ALL_OPTION" "${raw_files[@]}") || return 1
+    clear_screen
+    header
+    # gum choose 多選時，沒有勾選就按 Enter 不會選定游標項目，因此改用自訂的多選清單
+    choice=$(/bin/bash "$MULTI_SELECT_SCRIPT" "專案：${target}｜${operation}｜選擇 RAW 檔案" \
+        "$RAW_ALL_OPTION" "${raw_files[@]}") || return 1
 
-        while IFS= read -r name; do
-            [ -n "$name" ] || continue
-            if [ "$name" = "$RAW_ALL_OPTION" ]; then
-                SELECTED_RAWS=()
-                return 0
-            fi
-            SELECTED_RAWS+=("$name")
-        done <<< "$choice"
-        # 沒有勾選任何項目就按 Enter 時，重新顯示清單
-        [ "${#SELECTED_RAWS[@]}" -eq 0 ] || return 0
-    done
+    while IFS= read -r name; do
+        [ -n "$name" ] || continue
+        if [ "$name" = "$RAW_ALL_OPTION" ]; then
+            SELECTED_RAWS=()
+            return 0
+        fi
+        SELECTED_RAWS+=("$name")
+    done <<< "$choice"
+    [ "${#SELECTED_RAWS[@]}" -gt 0 ]
 }
 
 selected_raws_label() {
