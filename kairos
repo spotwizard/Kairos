@@ -26,7 +26,6 @@ LAST_STATUS=0
 SELECTED_TARGET=""
 SELECTED_RAW=""
 RAW_ALL_OPTION="全部 RAW 檔案"
-RAW_BACK_OPTION="0  返回操作選單"
 
 trap 'exit 130' INT
 
@@ -144,7 +143,7 @@ project_raw_files() {
     done | LC_ALL=C sort
 }
 
-# 選擇要處理的 RAW 檔：SELECTED_RAW 為空字串代表全部；回傳 1 代表返回操作選單
+# 選擇要處理的 RAW 檔：SELECTED_RAW 為空字串代表全部；按 ESC 回傳 1，代表返回操作選單
 choose_raw_file() {
     local target="$1"
     local operation="$2"
@@ -161,12 +160,12 @@ choose_raw_file() {
 
     clear_screen
     header
-    choice=$("$GUM_BIN" choose --header "專案：${target}｜${operation}｜選擇 RAW 檔案" --height 15 \
-        -- "$RAW_ALL_OPTION" "${raw_files[@]}" "$RAW_BACK_OPTION") || return 1
+    choice=$("$GUM_BIN" choose --header "專案：${target}｜${operation}｜選擇 RAW 檔案（ESC 返回操作選單）" --height 15 \
+        -- "$RAW_ALL_OPTION" "${raw_files[@]}") || return 1
 
     case "$choice" in
         "$RAW_ALL_OPTION") SELECTED_RAW="" ;;
-        "$RAW_BACK_OPTION"|"") return 1 ;;
+        "") return 1 ;;
         *) SELECTED_RAW="$choice" ;;
     esac
 }

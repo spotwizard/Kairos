@@ -361,8 +361,8 @@ test_dashboard() {
     set_input_queue "3" "2" "3" "2" "9" "4"
     run_dashboard || fail "AfterRAW 指定 RAW 載入執行失敗"
     expect_dashboard_call $'afterraw-worker\t--load-raw\t--file\tphoto.ARW\tStone House'
-    [ "$(sed -n '4p' "$TEST_ROOT/dashboard/menus.log")" = $'專案：Stone House｜載入 RAW｜選擇 RAW 檔案\t全部 RAW 檔案\tphoto.ARW\t0  返回操作選單' ] \
-        || fail "RAW 檔案選單應列出全部選項、RAW 檔名與返回選項，且不列出 sidecar"
+    [ "$(sed -n '4p' "$TEST_ROOT/dashboard/menus.log")" = $'專案：Stone House｜載入 RAW｜選擇 RAW 檔案（ESC 返回操作選單）\t全部 RAW 檔案\tphoto.ARW' ] \
+        || fail "RAW 檔案選單應列出全部選項與 RAW 檔名，以 ESC 返回，且不列出 sidecar"
 
     reset_dashboard_log
     set_input_queue "3" "2" "7" "2" "9" "4"
@@ -377,8 +377,8 @@ test_dashboard() {
         || fail "指定 RAW 重新修圖的確認訊息應寫出檔名"
 
     reset_dashboard_log
-    set_input_queue "3" "2" "3" "3" "9" "4"
-    run_dashboard || fail "RAW 檔案選單返回操作選單失敗"
+    set_input_queue "3" "2" "3" "esc" "9" "4"
+    run_dashboard || fail "RAW 檔案選單按 ESC 返回操作選單失敗"
     [ ! -s "$TEST_ROOT/dashboard/workers.log" ] || fail "RAW 檔案選單返回時不應執行 worker"
     [ "$(sed -n '5p' "$TEST_ROOT/dashboard/menus.log" | cut -f1)" = "專案：Stone House" ] \
         || fail "RAW 檔案選單返回後應回到目前專案的操作選單"
