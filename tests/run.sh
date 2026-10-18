@@ -668,12 +668,33 @@ MOCK
     : > "$dir/空檔.ARW.empty"
     : > "$dir/空檔.xmp"
     : > "$dir/空檔.xmp.empty"
-    if output=$(KAIROS_STAT_BIN="$mock_bin/stat" PATH="$mock_bin:$PATH" \
+    if output=$(KAIROS_FILEPROVIDERCTL_BIN="$mock_bin/不存在" KAIROS_STAT_BIN="$mock_bin/stat" PATH="$mock_bin:$PATH" \
         /bin/bash -c 'source "$1"; shift; make_available_offline "$@"' _ "$ROOT/dropbox_offline.sh" "$dir/空檔.ARW" "$dir/空檔.xmp" "$dir/本機.ARW" 2>&1); then
         fail "RAW 為 0 位元組時應回傳失敗：$output"
     fi
     [[ "$output" = *"檔案大小為 0 位元組（沒有內容）：空檔.ARW"* ]] || fail "未回報空檔：$output"
     [[ "$output" != *"空檔.xmp"* ]] || fail "不應把 0 位元組的 .xmp 視為錯誤：$output"
+
+    # 大小為 0 的佔位檔：fileproviderctl materialize 成功後標記消失，應通過
+    cat > "$mock_bin/fileproviderctl" <<'MOCK'
+#!/bin/bash
+[ "$1" = "materialize" ] && rm -f "${2}.empty"
+MOCK
+    chmod +x "$mock_bin/fileproviderctl"
+    output=$(KAIROS_FILEPROVIDERCTL_BIN="$mock_bin/fileproviderctl" KAIROS_STAT_BIN="$mock_bin/stat" PATH="$mock_bin:$PATH" \
+        /bin/bash -c 'source "$1"; shift; make_available_offline "$@"' _ "$ROOT/dropbox_offline.sh" "$dir/空檔.ARW" 2>&1) \
+        || fail "大小為 0 的佔位檔經 materialize 後應通過：$output"
+    [[ "$output" = *"嘗試請 Dropbox 下載"* ]] || fail "未嘗試以 fileproviderctl 下載大小為 0 的檔案：$output"
+    [ ! -e "$dir/空檔.ARW.empty" ] || fail "materialize 後檔案仍為 0 位元組"
+
+    # materialize 沒有效果時，等待逾時後應回報失敗並提示 Finder 的做法
+    : > "$dir/空檔.ARW.empty"
+    printf '#!/bin/bash\nexit 0\n' > "$mock_bin/fileproviderctl"
+    if output=$(KAIROS_OFFLINE_MATERIALIZE_SECONDS=0 KAIROS_FILEPROVIDERCTL_BIN="$mock_bin/fileproviderctl" KAIROS_STAT_BIN="$mock_bin/stat" PATH="$mock_bin:$PATH" \
+        /bin/bash -c 'source "$1"; shift; make_available_offline "$@"' _ "$ROOT/dropbox_offline.sh" "$dir/空檔.ARW" 2>&1); then
+        fail "materialize 無效時應回傳失敗：$output"
+    fi
+    [[ "$output" = *"設為可離線使用"* ]] || fail "未提示在 Finder 設為可離線使用：$output"
 }
 
 test_syntax

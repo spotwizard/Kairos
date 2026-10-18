@@ -15,6 +15,8 @@ else
 fi
 OFFLINE_DOWNLOAD_PARALLEL="${KAIROS_OFFLINE_PARALLEL:-4}"
 OFFLINE_VERIFY_SECONDS="${KAIROS_OFFLINE_VERIFY_SECONDS:-30}"
+OFFLINE_FPCTL_BIN="${KAIROS_FILEPROVIDERCTL_BIN:-fileproviderctl}"
+OFFLINE_MATERIALIZE_SECONDS="${KAIROS_OFFLINE_MATERIALIZE_SECONDS:-300}"
 
 # 輸出「旗標 大小 區塊數」，旗標沒有時為 -
 file_storage_info() {
@@ -39,6 +41,57 @@ file_is_online_only() {
     [[ "$size" =~ ^[0-9]+$ ]] && [[ "$blocks" =~ ^[0-9]+$ ]] && [ "$size" -gt 0 ] && [ "$blocks" -eq 0 ]
 }
 
+# 找出大小為 0 的檔案放入 EMPTY_FILES；旁邊的 .xmp、.acr 不檢查
+collect_empty_files() {
+    local file
+    local info
+
+    EMPTY_FILES=()
+    for file in "$@"; do
+        case "$file" in
+            *.[Xx][Mm][Pp]|*.[Aa][Cc][Rr]) continue ;;
+        esac
+        info=$(file_storage_info "$file") || continue
+        info="${info#* }"
+        if [ "${info%% *}" = "0" ]; then
+            EMPTY_FILES+=("$file")
+        fi
+    done
+}
+
+# Dropbox 的佔位檔可能顯示大小為 0，此時單純讀取不會觸發下載（讀到檔案結尾就結束），
+# 改用 fileproviderctl 要求系統把檔案內容下載下來，並等到大小不再是 0
+materialize_empty_files() {
+    local file
+    local running=0
+    local waited=0
+
+    command -v "$OFFLINE_FPCTL_BIN" > /dev/null 2>&1 || return 0
+
+    echo "有 ${#EMPTY_FILES[@]} 個檔案大小為 0，嘗試請 Dropbox 下載（最多等待 ${OFFLINE_MATERIALIZE_SECONDS} 秒）..."
+    for file in "${EMPTY_FILES[@]}"; do
+        "$OFFLINE_FPCTL_BIN" materialize "$file" > /dev/null 2>&1 &
+        running=$((running + 1))
+        if [ "$running" -ge "$OFFLINE_DOWNLOAD_PARALLEL" ]; then
+            wait
+            running=0
+        fi
+    done
+    wait
+
+    while true; do
+        collect_empty_files "${EMPTY_FILES[@]}"
+        if [ "${#EMPTY_FILES[@]}" -eq 0 ] || [ "$waited" -ge "$OFFLINE_MATERIALIZE_SECONDS" ]; then
+            return 0
+        fi
+        sleep 1
+        waited=$((waited + 1))
+        if [ $((waited % 10)) -eq 0 ]; then
+            echo "  等待 Dropbox 下載中，尚有 ${#EMPTY_FILES[@]} 個檔案..."
+        fi
+    done
+}
+
 # 參數為檔案路徑；每個檔案都完整讀取一次。
 # 本機已有內容的檔案很快讀完；僅供線上存取的檔案會在讀取時由 Dropbox 下載。
 # 不先依檔案狀態判斷是否需要下載，是因為實機上偵測曾漏掉這類檔案。
@@ -52,10 +105,8 @@ make_available_offline() {
     local started="$SECONDS"
     local status_dir
     local sample=""
-    local info
     local -a files=()
     local -a failed=()
-    local -a empty=()
 
     for file in "$@"; do
         [ -f "$file" ] && files+=("$file")
@@ -97,22 +148,18 @@ make_available_offline() {
     done
     rm -rf "$status_dir"
 
-    # 大小為 0 的檔案沒有內容，Photoshop 無法辨識；旁邊的 .xmp、.acr 不在此限
-    for file in "${files[@]}"; do
-        case "$file" in
-            *.[Xx][Mm][Pp]|*.[Aa][Cc][Rr]) continue ;;
-        esac
-        info=$(file_storage_info "$file") || continue
-        info="${info#* }"
-        if [ "${info%% *}" = "0" ]; then
-            empty+=("$file")
-        fi
-    done
-    if [ "${#empty[@]}" -gt 0 ]; then
-        for file in "${empty[@]}"; do
+    # 大小為 0 的檔案沒有內容，Photoshop 無法辨識
+    collect_empty_files "${files[@]}"
+    if [ "${#EMPTY_FILES[@]}" -gt 0 ]; then
+        materialize_empty_files
+    fi
+    if [ "${#EMPTY_FILES[@]}" -gt 0 ]; then
+        for file in "${EMPTY_FILES[@]}"; do
             echo "✗ 檔案大小為 0 位元組（沒有內容）：$(basename "$file")"
         done
-        echo "共 ${#empty[@]} 個檔案是空檔，Photoshop 無法開啟。請從原圖或 Dropbox 網頁版的歷史版本還原後重試"
+        echo "共 ${#EMPTY_FILES[@]} 個檔案沒有內容，Photoshop 無法開啟。"
+        echo "請先在 Finder 對該專案資料夾按右鍵選「設為可離線使用」，等 Dropbox 同步完成後重試；"
+        echo "若仍是 0 位元組，請從原圖封存或 Dropbox 網頁版的歷史版本還原"
         return 1
     fi
 
