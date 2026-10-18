@@ -367,6 +367,15 @@ test_dashboard() {
         || fail "AfterRAW 程序完成後應自動返回目前專案的操作選單"
     ! grep -F "按 Enter 返回儀表板" "$TEST_ROOT/dashboard/output.log" > /dev/null \
         || fail "AfterRAW 程序完成後不應要求按 Enter 返回儀表板"
+    ! grep -F "按 Enter 返回選單" "$TEST_ROOT/dashboard/output.log" > /dev/null \
+        || fail "AfterRAW 程序成功時不應停住等待 Enter"
+
+    reset_dashboard_log
+    set_input_queue "3" "2" "3" "1" "$pause" "esc" "esc" "esc"
+    KAIROS_FAKE_STATUS=5 run_dashboard || status=$?
+    grep -F "按 Enter 返回選單" "$TEST_ROOT/dashboard/output.log" > /dev/null \
+        || fail "AfterRAW 程序失敗時應停住，讓使用者看到錯誤訊息"
+    status=0
 
     reset_dashboard_log
     set_input_queue "3" "2" "3" "1" "esc" "esc" "esc"

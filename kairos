@@ -51,7 +51,7 @@ clear_screen() {
 }
 
 pause_for_dashboard() {
-    printf '\n按 Enter 返回儀表板'
+    printf '\n%s' "${1:-按 Enter 返回儀表板}"
     IFS= read -r _ || true
 }
 
@@ -85,6 +85,9 @@ run_worker() {
     fi
     if [ "$pause_mode" = "dashboard" ]; then
         pause_for_dashboard
+    elif [ "$status" -ne 0 ]; then
+        # 成功時直接回到選單；失敗時停住，否則錯誤訊息會被選單立刻清掉
+        pause_for_dashboard "按 Enter 返回選單"
     fi
 }
 
