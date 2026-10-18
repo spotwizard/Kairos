@@ -5,9 +5,21 @@
 # make_available_offline 會找出這類檔案，讀取一次內容讓 Dropbox 下載到本機。
 # 本檔由 afterraw.sh 以 source 載入。
 
-OFFLINE_STAT_BIN="${KAIROS_STAT_BIN:-stat}"
+# 固定用 macOS 內建的 stat；PATH 前面若有別的 stat（例如 conda 裝的 GNU 版），-f 的意義不同，會判斷錯誤
+if [ -n "${KAIROS_STAT_BIN:-}" ]; then
+    OFFLINE_STAT_BIN="$KAIROS_STAT_BIN"
+elif [ -x /usr/bin/stat ]; then
+    OFFLINE_STAT_BIN=/usr/bin/stat
+else
+    OFFLINE_STAT_BIN=stat
+fi
 OFFLINE_DOWNLOAD_PARALLEL="${KAIROS_OFFLINE_PARALLEL:-4}"
 OFFLINE_VERIFY_SECONDS="${KAIROS_OFFLINE_VERIFY_SECONDS:-30}"
+
+# 輸出「旗標 大小 區塊數」，旗標沒有時為 -
+file_storage_info() {
+    "$OFFLINE_STAT_BIN" -f '%Sf %z %b' -- "$1" 2>/dev/null
+}
 
 # 僅供線上存取的檔案有兩個特徵，符合任一個就視為尚未下載：
 # 檔案旗標含 dataless；或檔案大小大於 0 但實際佔用的區塊數為 0（只有佔位檔，沒有內容）
@@ -17,7 +29,7 @@ file_is_online_only() {
     local size
     local blocks
 
-    info=$("$OFFLINE_STAT_BIN" -f '%Sf %z %b' -- "$1" 2>/dev/null) || return 1
+    info=$(file_storage_info "$1") || return 1
     flags="${info%% *}"
     info="${info#* }"
     size="${info%% *}"
@@ -33,10 +45,14 @@ make_available_offline() {
     local running=0
     local waited=0
     local failed
+    local sample=""
     local -a pending=()
 
     for file in "$@"; do
         [ -f "$file" ] || continue
+        if [ -z "$sample" ]; then
+            sample="$(basename "$file")（旗標、大小、區塊數：$(file_storage_info "$file" || echo '無法讀取')）"
+        fi
         if file_is_online_only "$file"; then
             pending+=("$file")
         fi
@@ -44,6 +60,7 @@ make_available_offline() {
 
     if [ "${#pending[@]}" -eq 0 ]; then
         echo "✓ 檔案皆已在本機，不需從 Dropbox 下載"
+        [ -z "$sample" ] || echo "  檢查範例：$sample"
         return 0
     fi
 

@@ -624,22 +624,22 @@ MOCK
 MOCK
     chmod +x "$mock_bin/stat" "$mock_bin/cat"
 
-    output=$(PATH="$mock_bin:$PATH" /bin/bash -c 'source "$1"; shift; make_available_offline "$@"' _ \
+    output=$(KAIROS_STAT_BIN="$mock_bin/stat" PATH="$mock_bin:$PATH" /bin/bash -c 'source "$1"; shift; make_available_offline "$@"' _ \
         "$ROOT/dropbox_offline.sh" "$dir/本機.ARW" 2>&1) || fail "本機檔案不應下載或失敗：$output"
-    [[ "$output" = *"皆已在本機"* ]] || fail "未回報檔案皆已在本機：$output"
+    [[ "$output" = *"皆已在本機"* && "$output" = *"檢查範例：本機.ARW"* ]] || fail "未回報檔案皆已在本機：$output"
 
-    output=$(PATH="$mock_bin:$PATH" /bin/bash -c 'source "$1"; shift; make_available_offline "$@"' _ \
+    output=$(KAIROS_STAT_BIN="$mock_bin/stat" PATH="$mock_bin:$PATH" /bin/bash -c 'source "$1"; shift; make_available_offline "$@"' _ \
         "$ROOT/dropbox_offline.sh" "$dir/本機.ARW" "$dir/線上.ARW" 2>&1) || fail "線上檔案下載失敗：$output"
     [[ "$output" = *"下載：線上.ARW"* ]] || fail "未下載僅供線上存取的檔案：$output"
     [[ "$output" != *"下載：本機.ARW"* ]] || fail "不應下載已在本機的檔案：$output"
     [ ! -e "$dir/線上.ARW.dataless" ] || fail "下載後檔案仍標示為僅供線上存取"
 
-    output=$(PATH="$mock_bin:$PATH" /bin/bash -c 'source "$1"; shift; make_available_offline "$@"' _ \
+    output=$(KAIROS_STAT_BIN="$mock_bin/stat" PATH="$mock_bin:$PATH" /bin/bash -c 'source "$1"; shift; make_available_offline "$@"' _ \
         "$ROOT/dropbox_offline.sh" "$dir/佔位.ARW" 2>&1) || fail "佔位檔下載失敗：$output"
     [[ "$output" = *"下載：佔位.ARW"* ]] || fail "未下載區塊數為 0 的佔位檔：$output"
 
     : > "$dir/線上.ARW.dataless"
-    if output=$(MOCK_NO_DOWNLOAD=1 KAIROS_OFFLINE_VERIFY_SECONDS=0 PATH="$mock_bin:$PATH" \
+    if output=$(MOCK_NO_DOWNLOAD=1 KAIROS_OFFLINE_VERIFY_SECONDS=0 KAIROS_STAT_BIN="$mock_bin/stat" PATH="$mock_bin:$PATH" \
         /bin/bash -c 'source "$1"; shift; make_available_offline "$@"' _ "$ROOT/dropbox_offline.sh" "$dir/線上.ARW" 2>&1); then
         fail "下載未完成時應回傳失敗：$output"
     fi
