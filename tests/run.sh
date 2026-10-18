@@ -620,18 +620,20 @@ fi
 MOCK
     cat > "$mock_bin/cat" <<'MOCK'
 #!/bin/bash
+[ -z "${MOCK_CAT_FAIL:-}" ] || exit 1
 [ -n "${MOCK_NO_DOWNLOAD:-}" ] || rm -f "${2}.dataless" "${2}.sparse"
 MOCK
     chmod +x "$mock_bin/stat" "$mock_bin/cat"
 
     output=$(KAIROS_STAT_BIN="$mock_bin/stat" PATH="$mock_bin:$PATH" /bin/bash -c 'source "$1"; shift; make_available_offline "$@"' _ \
         "$ROOT/dropbox_offline.sh" "$dir/本機.ARW" 2>&1) || fail "本機檔案不應下載或失敗：$output"
-    [[ "$output" = *"皆已在本機"* && "$output" = *"檢查範例：本機.ARW"* ]] || fail "未回報檔案皆已在本機：$output"
+    [[ "$output" = *"其中 0 個原本僅供線上存取"* && "$output" = *"檢查範例：本機.ARW"* ]] || fail "未回報檔案皆可讀取：$output"
 
     output=$(KAIROS_STAT_BIN="$mock_bin/stat" PATH="$mock_bin:$PATH" /bin/bash -c 'source "$1"; shift; make_available_offline "$@"' _ \
         "$ROOT/dropbox_offline.sh" "$dir/本機.ARW" "$dir/線上.ARW" 2>&1) || fail "線上檔案下載失敗：$output"
     [[ "$output" = *"下載：線上.ARW"* ]] || fail "未下載僅供線上存取的檔案：$output"
-    [[ "$output" != *"下載：本機.ARW"* ]] || fail "不應下載已在本機的檔案：$output"
+    [[ "$output" = *"其中 1 個原本僅供線上存取"* ]] || fail "未回報原本僅供線上存取的檔案數：$output"
+    [[ "$output" != *"下載：本機.ARW"* ]] || fail "不應標示已在本機的檔案為下載：$output"
     [ ! -e "$dir/線上.ARW.dataless" ] || fail "下載後檔案仍標示為僅供線上存取"
 
     output=$(KAIROS_STAT_BIN="$mock_bin/stat" PATH="$mock_bin:$PATH" /bin/bash -c 'source "$1"; shift; make_available_offline "$@"' _ \
@@ -643,7 +645,13 @@ MOCK
         /bin/bash -c 'source "$1"; shift; make_available_offline "$@"' _ "$ROOT/dropbox_offline.sh" "$dir/線上.ARW" 2>&1); then
         fail "下載未完成時應回傳失敗：$output"
     fi
-    [[ "$output" = *"無法下載到本機"* ]] || fail "未回報下載失敗：$output"
+    [[ "$output" = *"無法讀取或下載到本機"* ]] || fail "未回報下載失敗：$output"
+
+    if output=$(MOCK_CAT_FAIL=1 KAIROS_OFFLINE_VERIFY_SECONDS=0 KAIROS_STAT_BIN="$mock_bin/stat" PATH="$mock_bin:$PATH" \
+        /bin/bash -c 'source "$1"; shift; make_available_offline "$@"' _ "$ROOT/dropbox_offline.sh" "$dir/本機.ARW" 2>&1); then
+        fail "讀取失敗時應回傳失敗：$output"
+    fi
+    [[ "$output" = *"無法讀取或下載到本機：$dir/本機.ARW"* ]] || fail "未回報讀取失敗的檔案：$output"
 }
 
 test_syntax

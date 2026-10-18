@@ -39,35 +39,38 @@ file_is_online_only() {
     [[ "$size" =~ ^[0-9]+$ ]] && [[ "$blocks" =~ ^[0-9]+$ ]] && [ "$size" -gt 0 ] && [ "$blocks" -eq 0 ]
 }
 
-# 參數為檔案路徑；已在本機的檔案不處理。有檔案無法下載時回傳 1
+# 參數為檔案路徑；每個檔案都完整讀取一次。
+# 本機已有內容的檔案很快讀完；僅供線上存取的檔案會在讀取時由 Dropbox 下載。
+# 不先依檔案狀態判斷是否需要下載，是因為實機上偵測曾漏掉這類檔案。
+# 有檔案讀取失敗或仍是佔位檔時回傳 1
 make_available_offline() {
     local file
+    local index
     local running=0
     local waited=0
-    local failed
+    local online_before=0
+    local started="$SECONDS"
+    local status_dir
     local sample=""
-    local -a pending=()
+    local -a files=()
+    local -a failed=()
 
     for file in "$@"; do
-        [ -f "$file" ] || continue
-        if [ -z "$sample" ]; then
-            sample="$(basename "$file")（旗標、大小、區塊數：$(file_storage_info "$file" || echo '無法讀取')）"
-        fi
-        if file_is_online_only "$file"; then
-            pending+=("$file")
-        fi
+        [ -f "$file" ] && files+=("$file")
     done
+    [ "${#files[@]}" -gt 0 ] || return 0
 
-    if [ "${#pending[@]}" -eq 0 ]; then
-        echo "✓ 檔案皆已在本機，不需從 Dropbox 下載"
-        [ -z "$sample" ] || echo "  檢查範例：$sample"
-        return 0
-    fi
+    status_dir=$(mktemp -d "${TMPDIR:-/tmp}/kairos_offline.XXXXXX") || return 1
 
-    echo "有 ${#pending[@]} 個檔案僅供線上存取，正在請 Dropbox 下載到本機..."
-    for file in "${pending[@]}"; do
-        echo "下載：$(basename "$file")"
-        cat -- "$file" > /dev/null 2>&1 &
+    echo "確認 ${#files[@]} 個檔案可讀取；僅供線上存取的檔案會由 Dropbox 下載到本機，可能需要一些時間..."
+    sample="$(basename "${files[0]}")（旗標、大小、區塊數：$(file_storage_info "${files[0]}" || echo '無法讀取')）"
+    for index in "${!files[@]}"; do
+        file="${files[$index]}"
+        if file_is_online_only "$file"; then
+            online_before=$((online_before + 1))
+            echo "下載：$(basename "$file")"
+        fi
+        ( cat -- "$file" > /dev/null 2>&1 || : > "$status_dir/$index" ) &
         running=$((running + 1))
         if [ "$running" -ge "$OFFLINE_DOWNLOAD_PARALLEL" ]; then
             wait
@@ -76,11 +79,12 @@ make_available_offline() {
     done
     wait
 
+    # 讀取完成後仍是佔位檔的，再等 Dropbox 一段時間
     while true; do
         failed=()
-        for file in "${pending[@]}"; do
-            if file_is_online_only "$file"; then
-                failed+=("$file")
+        for index in "${!files[@]}"; do
+            if [ -e "$status_dir/$index" ] || file_is_online_only "${files[$index]}"; then
+                failed+=("${files[$index]}")
             fi
         done
         if [ "${#failed[@]}" -eq 0 ] || [ "$waited" -ge "$OFFLINE_VERIFY_SECONDS" ]; then
@@ -89,15 +93,17 @@ make_available_offline() {
         sleep 1
         waited=$((waited + 1))
     done
+    rm -rf "$status_dir"
 
     if [ "${#failed[@]}" -gt 0 ]; then
         for file in "${failed[@]}"; do
-            echo "✗ 無法下載到本機：$file"
+            echo "✗ 無法讀取或下載到本機：$file"
         done
         echo "請確認 Dropbox 已連線並正常同步後重試"
         return 1
     fi
 
-    echo "✓ 已下載 ${#pending[@]} 個檔案到本機"
+    echo "✓ ${#files[@]} 個檔案皆可讀取（其中 ${online_before} 個原本僅供線上存取），耗時 $((SECONDS - started)) 秒"
+    echo "  檢查範例：$sample"
     return 0
 }
