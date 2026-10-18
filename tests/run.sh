@@ -608,18 +608,13 @@ test_dropbox_offline() {
     local output
 
     mkdir -p "$mock_bin"
-    : > "$dir/線上.ARW"
-    : > "$dir/本機.ARW"
-    : > "$dir/線上.ARW.dataless"
-    : > "$dir/佔位.ARW"
-    : > "$dir/佔位.ARW.sparse"
 
-    # stat 在檔案旁有 .dataless 標記時回報 dataless 旗標，有 .sparse 標記時回報大小 100 但區塊數 0；
-    # cat 讀取檔案後移除標記，模擬 Dropbox 下載完成
+    # 以檔案旁的標記檔模擬狀態：.placeholder 為 Dropbox 佔位檔（大小 0、帶 com.dropbox.placeholder 屬性），
+    # .dataless 為帶 dataless 旗標的檔案，.sparse 為大小 100 但區塊數 0，.empty 為單純 0 位元組
     cat > "$mock_bin/stat" <<'MOCK'
 #!/bin/bash
 file="${@: -1}"
-if [ -e "${file}.empty" ]; then
+if [ -e "${file}.placeholder" ] || [ -e "${file}.empty" ]; then
     echo "- 0 0"
 elif [ -e "${file}.dataless" ]; then
     echo "dataless 100 0"
@@ -629,72 +624,67 @@ else
     echo "- 100 8"
 fi
 MOCK
+    cat > "$mock_bin/xattr" <<'MOCK'
+#!/bin/bash
+[ "$1" = "-p" ] && [ "$2" = "com.dropbox.placeholder" ] && [ -e "${3}.placeholder" ]
+MOCK
+    # open -g -a Dropbox 檔案：模擬 Dropbox 下載完成，佔位標記消失
+    cat > "$mock_bin/open" <<'MOCK'
+#!/bin/bash
+[ -n "${MOCK_NO_DOWNLOAD:-}" ] || rm -f "${4}.placeholder"
+MOCK
+    # cat 讀取 dataless 或區塊數為 0 的檔案後，標記消失
     cat > "$mock_bin/cat" <<'MOCK'
 #!/bin/bash
-[ -z "${MOCK_CAT_FAIL:-}" ] || exit 1
-[ -n "${MOCK_NO_DOWNLOAD:-}" ] || rm -f "${2}.dataless" "${2}.sparse"
+rm -f "${2}.dataless" "${2}.sparse"
 MOCK
-    chmod +x "$mock_bin/stat" "$mock_bin/cat"
+    chmod +x "$mock_bin/stat" "$mock_bin/xattr" "$mock_bin/open" "$mock_bin/cat"
 
-    output=$(KAIROS_STAT_BIN="$mock_bin/stat" PATH="$mock_bin:$PATH" /bin/bash -c 'source "$1"; shift; make_available_offline "$@"' _ \
-        "$ROOT/dropbox_offline.sh" "$dir/本機.ARW" 2>&1) || fail "本機檔案不應下載或失敗：$output"
-    [[ "$output" = *"其中 0 個原本僅供線上存取"* && "$output" = *"檢查範例：本機.ARW"* ]] || fail "未回報檔案皆可讀取：$output"
+    run_offline() {
+        KAIROS_STAT_BIN="$mock_bin/stat" KAIROS_XATTR_BIN="$mock_bin/xattr" KAIROS_OPEN_BIN="$mock_bin/open" \
+            PATH="$mock_bin:$PATH" /bin/bash -c 'source "$1"; shift; make_available_offline "$@"' _ \
+            "$ROOT/dropbox_offline.sh" "$@" 2>&1
+    }
 
-    output=$(KAIROS_STAT_BIN="$mock_bin/stat" PATH="$mock_bin:$PATH" /bin/bash -c 'source "$1"; shift; make_available_offline "$@"' _ \
-        "$ROOT/dropbox_offline.sh" "$dir/本機.ARW" "$dir/線上.ARW" 2>&1) || fail "線上檔案下載失敗：$output"
-    [[ "$output" = *"下載：線上.ARW"* ]] || fail "未下載僅供線上存取的檔案：$output"
-    [[ "$output" = *"其中 1 個原本僅供線上存取"* ]] || fail "未回報原本僅供線上存取的檔案數：$output"
-    [[ "$output" != *"下載：本機.ARW"* ]] || fail "不應標示已在本機的檔案為下載：$output"
-    [ ! -e "$dir/線上.ARW.dataless" ] || fail "下載後檔案仍標示為僅供線上存取"
+    : > "$dir/本機.ARW"
+    output=$(run_offline "$dir/本機.ARW") || fail "本機檔案不應失敗：$output"
+    [[ "$output" = *"皆已在本機"* ]] || fail "未回報檔案皆已在本機：$output"
 
-    output=$(KAIROS_STAT_BIN="$mock_bin/stat" PATH="$mock_bin:$PATH" /bin/bash -c 'source "$1"; shift; make_available_offline "$@"' _ \
-        "$ROOT/dropbox_offline.sh" "$dir/佔位.ARW" 2>&1) || fail "佔位檔下載失敗：$output"
-    [[ "$output" = *"下載：佔位.ARW"* ]] || fail "未下載區塊數為 0 的佔位檔：$output"
+    : > "$dir/佔位.ARW"
+    : > "$dir/佔位.ARW.placeholder"
+    output=$(run_offline "$dir/本機.ARW" "$dir/佔位.ARW") || fail "Dropbox 佔位檔下載失敗：$output"
+    [[ "$output" = *"下載：佔位.ARW"* ]] || fail "未下載 Dropbox 佔位檔：$output"
+    [[ "$output" != *"下載：本機.ARW"* ]] || fail "不應下載已在本機的檔案：$output"
+    [[ "$output" = *"已下載 1 個檔案"* ]] || fail "未回報下載數量：$output"
+    [ ! -e "$dir/佔位.ARW.placeholder" ] || fail "下載後檔案仍是佔位檔"
 
+    : > "$dir/線上.ARW"
     : > "$dir/線上.ARW.dataless"
-    if output=$(MOCK_NO_DOWNLOAD=1 KAIROS_OFFLINE_VERIFY_SECONDS=0 KAIROS_STAT_BIN="$mock_bin/stat" PATH="$mock_bin:$PATH" \
-        /bin/bash -c 'source "$1"; shift; make_available_offline "$@"' _ "$ROOT/dropbox_offline.sh" "$dir/線上.ARW" 2>&1); then
+    : > "$dir/稀疏.ARW"
+    : > "$dir/稀疏.ARW.sparse"
+    output=$(run_offline "$dir/線上.ARW" "$dir/稀疏.ARW") || fail "dataless 或區塊數為 0 的檔案下載失敗：$output"
+    [[ "$output" = *"已下載 2 個檔案"* ]] || fail "未下載 dataless 與區塊數為 0 的檔案：$output"
+    [ ! -e "$dir/線上.ARW.dataless" ] || fail "讀取後檔案仍標示為 dataless"
+
+    # Dropbox 沒有完成下載：逾時後回報失敗，並提示 Finder 的做法
+    : > "$dir/佔位.ARW.placeholder"
+    if output=$(MOCK_NO_DOWNLOAD=1 KAIROS_OFFLINE_DOWNLOAD_SECONDS=0 run_offline "$dir/佔位.ARW"); then
         fail "下載未完成時應回傳失敗：$output"
     fi
-    [[ "$output" = *"無法讀取或下載到本機"* ]] || fail "未回報下載失敗：$output"
+    [[ "$output" = *"尚未下載完成：佔位.ARW"* ]] || fail "未回報下載未完成的檔案：$output"
+    [[ "$output" = *"設為可離線使用"* ]] || fail "未提示在 Finder 設為可離線使用：$output"
+    rm -f "$dir/佔位.ARW.placeholder"
 
-    if output=$(MOCK_CAT_FAIL=1 KAIROS_OFFLINE_VERIFY_SECONDS=0 KAIROS_STAT_BIN="$mock_bin/stat" PATH="$mock_bin:$PATH" \
-        /bin/bash -c 'source "$1"; shift; make_available_offline "$@"' _ "$ROOT/dropbox_offline.sh" "$dir/本機.ARW" 2>&1); then
-        fail "讀取失敗時應回傳失敗：$output"
-    fi
-    [[ "$output" = *"無法讀取或下載到本機：$dir/本機.ARW"* ]] || fail "未回報讀取失敗的檔案：$output"
-
+    # 單純 0 位元組（不是佔位檔）沒有內容；旁邊的 .xmp 不檢查
     : > "$dir/空檔.ARW"
     : > "$dir/空檔.ARW.empty"
     : > "$dir/空檔.xmp"
     : > "$dir/空檔.xmp.empty"
-    if output=$(KAIROS_FILEPROVIDERCTL_BIN="$mock_bin/不存在" KAIROS_STAT_BIN="$mock_bin/stat" PATH="$mock_bin:$PATH" \
-        /bin/bash -c 'source "$1"; shift; make_available_offline "$@"' _ "$ROOT/dropbox_offline.sh" "$dir/空檔.ARW" "$dir/空檔.xmp" "$dir/本機.ARW" 2>&1); then
+    if output=$(run_offline "$dir/空檔.ARW" "$dir/空檔.xmp" "$dir/本機.ARW"); then
         fail "RAW 為 0 位元組時應回傳失敗：$output"
     fi
     [[ "$output" = *"檔案大小為 0 位元組（沒有內容）：空檔.ARW"* ]] || fail "未回報空檔：$output"
     [[ "$output" != *"空檔.xmp"* ]] || fail "不應把 0 位元組的 .xmp 視為錯誤：$output"
-
-    # 大小為 0 的佔位檔：fileproviderctl materialize 成功後標記消失，應通過
-    cat > "$mock_bin/fileproviderctl" <<'MOCK'
-#!/bin/bash
-[ "$1" = "materialize" ] && rm -f "${2}.empty"
-MOCK
-    chmod +x "$mock_bin/fileproviderctl"
-    output=$(KAIROS_FILEPROVIDERCTL_BIN="$mock_bin/fileproviderctl" KAIROS_STAT_BIN="$mock_bin/stat" PATH="$mock_bin:$PATH" \
-        /bin/bash -c 'source "$1"; shift; make_available_offline "$@"' _ "$ROOT/dropbox_offline.sh" "$dir/空檔.ARW" 2>&1) \
-        || fail "大小為 0 的佔位檔經 materialize 後應通過：$output"
-    [[ "$output" = *"嘗試請 Dropbox 下載"* ]] || fail "未嘗試以 fileproviderctl 下載大小為 0 的檔案：$output"
-    [ ! -e "$dir/空檔.ARW.empty" ] || fail "materialize 後檔案仍為 0 位元組"
-
-    # materialize 沒有效果時，等待逾時後應回報失敗並提示 Finder 的做法
-    : > "$dir/空檔.ARW.empty"
-    printf '#!/bin/bash\nexit 0\n' > "$mock_bin/fileproviderctl"
-    if output=$(KAIROS_OFFLINE_MATERIALIZE_SECONDS=0 KAIROS_FILEPROVIDERCTL_BIN="$mock_bin/fileproviderctl" KAIROS_STAT_BIN="$mock_bin/stat" PATH="$mock_bin:$PATH" \
-        /bin/bash -c 'source "$1"; shift; make_available_offline "$@"' _ "$ROOT/dropbox_offline.sh" "$dir/空檔.ARW" 2>&1); then
-        fail "materialize 無效時應回傳失敗：$output"
-    fi
-    [[ "$output" = *"設為可離線使用"* ]] || fail "未提示在 Finder 設為可離線使用：$output"
 }
 
 test_syntax

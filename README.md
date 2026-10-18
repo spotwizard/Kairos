@@ -57,7 +57,7 @@ AfterRAW 各層選單都以 ESC 返回上一層：RAW 檔案清單 → 操作選
 - 重新修圖會刪除專案 `RAW` 目錄下的 `.xmp`、`.acr` 檔案，以及 `PSD`、`IG`、`FB` 目錄，接著執行前置作業。刪除後無法復原。指定 RAW 檔名時，只刪除這些檔案的 `.xmp`、`.acr`，以及 `PSD`、`IG`、`FB` 目錄內同名的 `.psd`、`.jpg`，再只對這些檔案執行前置作業。
 - 前置作業會寫入 Adobe Color、鏡頭校正、4:5 置中裁切與雜訊設定，操作 Camera Raw 去除雜色，最後重新載入 RAW 等待人工修圖。
 - 載入只開啟 RAW，不寫入 sidecar 或輸出成品。
-- 所有操作在讀取檔案前，會先把要處理的檔案（RAW 與其 `.xmp`、`.acr`、PSD、IG 底版）完整讀取一遍；被 Dropbox 設為「僅供線上存取」的檔案會在這次讀取時由 Dropbox 下載到本機，再交給 Photoshop。Dropbox 的佔位檔可能顯示大小為 0，這類檔案會再用 `fileproviderctl materialize` 要求下載。有檔案讀不到、下載失敗或大小仍為 0 時中止並列出檔名，不開啟 Photoshop。這只是把檔案下載下來，不會把資料夾永久設為「可供離線存取」，Dropbox 日後仍可能把久未使用的檔案改回僅供線上存取。
+- 所有操作在讀取檔案前，會先檢查要處理的檔案（RAW 與其 `.xmp`、`.acr`、PSD、IG 底版）是否為 Dropbox 的「僅供線上存取」佔位檔（大小為 0、帶 `com.dropbox.placeholder` 屬性）。是的話用 `open -g -a Dropbox` 請 Dropbox 下載，等到全部下載完成（最多 10 分鐘，每 10 秒顯示剩餘檔案數）才交給 Photoshop；逾時、下載後仍是 0 位元組時，列出檔名並中止，不開啟 Photoshop。這只是把檔案下載下來，不會把資料夾永久設為「可供離線存取」，Dropbox 日後仍可能把久未使用的檔案改回僅供線上存取。
 - 開啟 PSD 檔案會用 Photoshop 開啟選定專案 `PSD` 目錄下的 `.psd` 檔案。
 - 後置輸出只處理同時具有 `.xmp` 與 `.acr` 的 `.ARW`／`.RAW`，建立 PSD 並輸出 IG、FB JPG。
 - 後置程序會沿用原本的覆寫與孤兒輸出清除行為，沒有 preview、確認或 dry-run。指定 RAW 檔名時只覆寫這些檔案的成品，不清除其他輸出檔。
