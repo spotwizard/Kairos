@@ -631,17 +631,33 @@ MOCK
     # open -g -a Dropbox 檔案：模擬 Dropbox 下載完成，佔位標記消失
     cat > "$mock_bin/open" <<'MOCK'
 #!/bin/bash
-[ -n "${MOCK_NO_DOWNLOAD:-}" ] || rm -f "${4}.placeholder"
+[ -n "${MOCK_NO_DOWNLOAD:-}" ] || { rm -f "${4}.placeholder"; : > "$MOCK_RUNNING_DIR/launched.Preview"; : > "$MOCK_RUNNING_DIR/launched.Photos"; }
 MOCK
     # cat 讀取 dataless 或區塊數為 0 的檔案後，標記消失
     cat > "$mock_bin/cat" <<'MOCK'
 #!/bin/bash
 rm -f "${2}.dataless" "${2}.sparse"
 MOCK
-    chmod +x "$mock_bin/stat" "$mock_bin/xattr" "$mock_bin/open" "$mock_bin/cat"
+    # pgrep：檔案 $dir/running.<app> 存在代表該 app 開著；osascript、killall 只記錄呼叫
+    cat > "$mock_bin/pgrep" <<'MOCK'
+#!/bin/bash
+[ -e "$MOCK_RUNNING_DIR/running.${2}" ] || [ -e "$MOCK_RUNNING_DIR/launched.${2}" ]
+MOCK
+    cat > "$mock_bin/osascript" <<'MOCK'
+#!/bin/bash
+echo "$2" >> "$MOCK_RUNNING_DIR/osascript.log"
+MOCK
+    cat > "$mock_bin/killall" <<'MOCK'
+#!/bin/bash
+echo "$1" >> "$MOCK_RUNNING_DIR/killall.log"
+MOCK
+    chmod +x "$mock_bin/stat" "$mock_bin/xattr" "$mock_bin/open" "$mock_bin/cat" \
+        "$mock_bin/pgrep" "$mock_bin/osascript" "$mock_bin/killall"
 
     run_offline() {
-        KAIROS_STAT_BIN="$mock_bin/stat" KAIROS_XATTR_BIN="$mock_bin/xattr" KAIROS_OPEN_BIN="$mock_bin/open" \
+        MOCK_RUNNING_DIR="$dir" KAIROS_OFFLINE_CLEANUP_WAIT_SECONDS=0 \
+            KAIROS_PGREP_BIN="$mock_bin/pgrep" KAIROS_OSASCRIPT_BIN="$mock_bin/osascript" KAIROS_KILLALL_BIN="$mock_bin/killall" \
+            KAIROS_STAT_BIN="$mock_bin/stat" KAIROS_XATTR_BIN="$mock_bin/xattr" KAIROS_OPEN_BIN="$mock_bin/open" \
             PATH="$mock_bin:$PATH" /bin/bash -c 'source "$1"; shift; make_available_offline "$@"' _ \
             "$ROOT/dropbox_offline.sh" "$@" 2>&1
     }
@@ -649,6 +665,7 @@ MOCK
     : > "$dir/本機.ARW"
     output=$(run_offline "$dir/本機.ARW") || fail "本機檔案不應失敗：$output"
     [[ "$output" = *"皆已在本機"* ]] || fail "未回報檔案皆已在本機：$output"
+    [ ! -e "$dir/killall.log" ] || fail "沒有下載時不應關閉對話框"
 
     : > "$dir/佔位.ARW"
     : > "$dir/佔位.ARW.placeholder"
@@ -657,6 +674,16 @@ MOCK
     [[ "$output" != *"下載：本機.ARW"* ]] || fail "不應下載已在本機的檔案：$output"
     [[ "$output" = *"已下載 1 個檔案"* ]] || fail "未回報下載數量：$output"
     [ ! -e "$dir/佔位.ARW.placeholder" ] || fail "下載後檔案仍是佔位檔"
+
+    # 下載後被開啟的 app 若原本沒開著就關閉；原本就開著的不動；並關閉「未設定應用程式」對話框
+    rm -f "$dir/osascript.log" "$dir/killall.log" "$dir/launched.Preview" "$dir/launched.Photos"
+    : > "$dir/佔位.ARW.placeholder"
+    : > "$dir/running.Photos"
+    output=$(run_offline "$dir/佔位.ARW") || fail "Dropbox 佔位檔下載失敗：$output"
+    [ "$(cat "$dir/osascript.log" 2>/dev/null)" = 'tell application "Preview" to quit' ] \
+        || fail "只應關閉下載前沒開著的 Preview：$(cat "$dir/osascript.log" 2>/dev/null)"
+    [ "$(cat "$dir/killall.log" 2>/dev/null)" = "CoreServicesUIAgent" ] || fail "下載後應關閉「未設定應用程式」對話框"
+    rm -f "$dir/running.Photos" "$dir/launched.Preview" "$dir/launched.Photos" "$dir/osascript.log" "$dir/killall.log"
 
     : > "$dir/線上.ARW"
     : > "$dir/線上.ARW.dataless"

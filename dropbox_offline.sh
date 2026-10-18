@@ -22,6 +22,12 @@ else
     OFFLINE_XATTR_BIN=xattr
 fi
 OFFLINE_OPEN_BIN="${KAIROS_OPEN_BIN:-open}"
+OFFLINE_PGREP_BIN="${KAIROS_PGREP_BIN:-pgrep}"
+OFFLINE_OSASCRIPT_BIN="${KAIROS_OSASCRIPT_BIN:-osascript}"
+OFFLINE_KILLALL_BIN="${KAIROS_KILLALL_BIN:-killall}"
+OFFLINE_CLEANUP_WAIT_SECONDS="${KAIROS_OFFLINE_CLEANUP_WAIT_SECONDS:-3}"
+# Dropbox 下載完檔案後會用預設程式開啟它：RAW 會開在這些 app，旁邊的 .xmp、.acr 則跳出「未設定應用程式」對話框
+OFFLINE_SIDE_EFFECT_APPS=(Preview Photos)
 OFFLINE_DOWNLOAD_SECONDS="${KAIROS_OFFLINE_DOWNLOAD_SECONDS:-600}"
 
 # 輸出「旗標 大小 區塊數」，旗標沒有時為 -
@@ -94,6 +100,38 @@ request_download() {
     fi
 }
 
+# 記錄哪些 app 在下載前已經開著，之後只關閉因下載才被開啟的，不動使用者原本開著的視窗
+snapshot_running_apps() {
+    local app
+
+    OFFLINE_APPS_BEFORE=()
+    for app in "${OFFLINE_SIDE_EFFECT_APPS[@]}"; do
+        if "$OFFLINE_PGREP_BIN" -x "$app" > /dev/null 2>&1; then
+            OFFLINE_APPS_BEFORE+=("$app")
+        fi
+    done
+}
+
+cleanup_download_side_effects() {
+    local app
+    local before
+    local was_running
+
+    sleep "$OFFLINE_CLEANUP_WAIT_SECONDS"
+    for app in "${OFFLINE_SIDE_EFFECT_APPS[@]}"; do
+        was_running=false
+        for before in "${OFFLINE_APPS_BEFORE[@]}"; do
+            [ "$before" = "$app" ] && was_running=true
+        done
+        if [ "$was_running" = false ] && "$OFFLINE_PGREP_BIN" -x "$app" > /dev/null 2>&1; then
+            "$OFFLINE_OSASCRIPT_BIN" -e "tell application \"$app\" to quit" > /dev/null 2>&1
+        fi
+    done
+    # 關閉「未設定應用程式來打開文件」對話框；系統會自動重新啟動這個背景程式
+    "$OFFLINE_KILLALL_BIN" CoreServicesUIAgent > /dev/null 2>&1
+    return 0
+}
+
 # 參數為檔案路徑；已在本機的檔案不處理。有檔案無法下載、下載逾時或沒有內容時回傳 1
 make_available_offline() {
     local file
@@ -111,6 +149,7 @@ make_available_offline() {
 
     if [ "$requested" -gt 0 ]; then
         echo "有 ${requested} 個檔案僅供線上存取，正在請 Dropbox 下載到本機（最多等待 ${OFFLINE_DOWNLOAD_SECONDS} 秒）..."
+        snapshot_running_apps
         for file in "${PENDING_FILES[@]}"; do
             echo "下載：$(basename "$file")"
             request_download "$file"
@@ -127,6 +166,8 @@ make_available_offline() {
                 echo "  等待 Dropbox 下載中，尚有 ${#PENDING_FILES[@]} 個檔案..."
             fi
         done
+
+        cleanup_download_side_effects
 
         if [ "${#PENDING_FILES[@]}" -gt 0 ]; then
             for file in "${PENDING_FILES[@]}"; do
