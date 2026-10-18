@@ -52,8 +52,10 @@ make_available_offline() {
     local started="$SECONDS"
     local status_dir
     local sample=""
+    local info
     local -a files=()
     local -a failed=()
+    local -a empty=()
 
     for file in "$@"; do
         [ -f "$file" ] && files+=("$file")
@@ -94,6 +96,25 @@ make_available_offline() {
         waited=$((waited + 1))
     done
     rm -rf "$status_dir"
+
+    # 大小為 0 的檔案沒有內容，Photoshop 無法辨識；旁邊的 .xmp、.acr 不在此限
+    for file in "${files[@]}"; do
+        case "$file" in
+            *.[Xx][Mm][Pp]|*.[Aa][Cc][Rr]) continue ;;
+        esac
+        info=$(file_storage_info "$file") || continue
+        info="${info#* }"
+        if [ "${info%% *}" = "0" ]; then
+            empty+=("$file")
+        fi
+    done
+    if [ "${#empty[@]}" -gt 0 ]; then
+        for file in "${empty[@]}"; do
+            echo "✗ 檔案大小為 0 位元組（沒有內容）：$(basename "$file")"
+        done
+        echo "共 ${#empty[@]} 個檔案是空檔，Photoshop 無法開啟。請從原圖或 Dropbox 網頁版的歷史版本還原後重試"
+        return 1
+    fi
 
     if [ "${#failed[@]}" -gt 0 ]; then
         for file in "${failed[@]}"; do

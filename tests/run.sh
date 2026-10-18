@@ -610,7 +610,9 @@ test_dropbox_offline() {
     cat > "$mock_bin/stat" <<'MOCK'
 #!/bin/bash
 file="${@: -1}"
-if [ -e "${file}.dataless" ]; then
+if [ -e "${file}.empty" ]; then
+    echo "- 0 0"
+elif [ -e "${file}.dataless" ]; then
     echo "dataless 100 0"
 elif [ -e "${file}.sparse" ]; then
     echo "- 100 0"
@@ -652,6 +654,17 @@ MOCK
         fail "讀取失敗時應回傳失敗：$output"
     fi
     [[ "$output" = *"無法讀取或下載到本機：$dir/本機.ARW"* ]] || fail "未回報讀取失敗的檔案：$output"
+
+    : > "$dir/空檔.ARW"
+    : > "$dir/空檔.ARW.empty"
+    : > "$dir/空檔.xmp"
+    : > "$dir/空檔.xmp.empty"
+    if output=$(KAIROS_STAT_BIN="$mock_bin/stat" PATH="$mock_bin:$PATH" \
+        /bin/bash -c 'source "$1"; shift; make_available_offline "$@"' _ "$ROOT/dropbox_offline.sh" "$dir/空檔.ARW" "$dir/空檔.xmp" "$dir/本機.ARW" 2>&1); then
+        fail "RAW 為 0 位元組時應回傳失敗：$output"
+    fi
+    [[ "$output" = *"檔案大小為 0 位元組（沒有內容）：空檔.ARW"* ]] || fail "未回報空檔：$output"
+    [[ "$output" != *"空檔.xmp"* ]] || fail "不應把 0 位元組的 .xmp 視為錯誤：$output"
 }
 
 test_syntax
