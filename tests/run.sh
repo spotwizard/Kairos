@@ -602,20 +602,25 @@ test_dropbox_offline() {
     : > "$dir/線上.ARW"
     : > "$dir/本機.ARW"
     : > "$dir/線上.ARW.dataless"
+    : > "$dir/佔位.ARW"
+    : > "$dir/佔位.ARW.sparse"
 
-    # stat 在檔案旁有 .dataless 標記時回報 dataless；cat 讀取檔案後移除標記，模擬 Dropbox 下載完成
+    # stat 在檔案旁有 .dataless 標記時回報 dataless 旗標，有 .sparse 標記時回報大小 100 但區塊數 0；
+    # cat 讀取檔案後移除標記，模擬 Dropbox 下載完成
     cat > "$mock_bin/stat" <<'MOCK'
 #!/bin/bash
 file="${@: -1}"
 if [ -e "${file}.dataless" ]; then
-    echo "dataless"
+    echo "dataless 100 0"
+elif [ -e "${file}.sparse" ]; then
+    echo "- 100 0"
 else
-    echo "-"
+    echo "- 100 8"
 fi
 MOCK
     cat > "$mock_bin/cat" <<'MOCK'
 #!/bin/bash
-[ -n "${MOCK_NO_DOWNLOAD:-}" ] || rm -f "${2}.dataless"
+[ -n "${MOCK_NO_DOWNLOAD:-}" ] || rm -f "${2}.dataless" "${2}.sparse"
 MOCK
     chmod +x "$mock_bin/stat" "$mock_bin/cat"
 
@@ -628,6 +633,10 @@ MOCK
     [[ "$output" = *"下載：線上.ARW"* ]] || fail "未下載僅供線上存取的檔案：$output"
     [[ "$output" != *"下載：本機.ARW"* ]] || fail "不應下載已在本機的檔案：$output"
     [ ! -e "$dir/線上.ARW.dataless" ] || fail "下載後檔案仍標示為僅供線上存取"
+
+    output=$(PATH="$mock_bin:$PATH" /bin/bash -c 'source "$1"; shift; make_available_offline "$@"' _ \
+        "$ROOT/dropbox_offline.sh" "$dir/佔位.ARW" 2>&1) || fail "佔位檔下載失敗：$output"
+    [[ "$output" = *"下載：佔位.ARW"* ]] || fail "未下載區塊數為 0 的佔位檔：$output"
 
     : > "$dir/線上.ARW.dataless"
     if output=$(MOCK_NO_DOWNLOAD=1 KAIROS_OFFLINE_VERIFY_SECONDS=0 PATH="$mock_bin:$PATH" \

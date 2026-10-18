@@ -9,11 +9,22 @@ OFFLINE_STAT_BIN="${KAIROS_STAT_BIN:-stat}"
 OFFLINE_DOWNLOAD_PARALLEL="${KAIROS_OFFLINE_PARALLEL:-4}"
 OFFLINE_VERIFY_SECONDS="${KAIROS_OFFLINE_VERIFY_SECONDS:-30}"
 
+# 僅供線上存取的檔案有兩個特徵，符合任一個就視為尚未下載：
+# 檔案旗標含 dataless；或檔案大小大於 0 但實際佔用的區塊數為 0（只有佔位檔，沒有內容）
 file_is_online_only() {
+    local info
     local flags
+    local size
+    local blocks
 
-    flags=$("$OFFLINE_STAT_BIN" -f '%Sf' -- "$1" 2>/dev/null) || return 1
-    [[ "$flags" = *dataless* ]]
+    info=$("$OFFLINE_STAT_BIN" -f '%Sf %z %b' -- "$1" 2>/dev/null) || return 1
+    flags="${info%% *}"
+    info="${info#* }"
+    size="${info%% *}"
+    blocks="${info#* }"
+
+    [[ "$flags" = *dataless* ]] && return 0
+    [[ "$size" =~ ^[0-9]+$ ]] && [[ "$blocks" =~ ^[0-9]+$ ]] && [ "$size" -gt 0 ] && [ "$blocks" -eq 0 ]
 }
 
 # 參數為檔案路徑；已在本機的檔案不處理。有檔案無法下載時回傳 1
