@@ -26,6 +26,7 @@ test_syntax() {
         "$ROOT/rename_raw.sh" \
         "$ROOT/afterraw.sh" \
         "$ROOT/multi_select.sh" \
+        "$ROOT/dropbox_offline.sh" \
         "$ROOT/tests/run.sh" || fail "Shell 語法檢查未通過"
 
     # macOS 內建 bash 3.2 會把緊接在 $變數 後面的中文字元當成變數名稱的一部分，必須寫成 ${變數}
@@ -34,7 +35,8 @@ test_syntax() {
         "$ROOT/organize_raw_by_date.sh" \
         "$ROOT/rename_raw.sh" \
         "$ROOT/afterraw.sh" \
-        "$ROOT/multi_select.sh"; then
+        "$ROOT/multi_select.sh" \
+        "$ROOT/dropbox_offline.sh"; then
         fail "變數後面緊接非 ASCII 字元時必須加大括號"
     fi
 }
@@ -591,8 +593,53 @@ sys.exit(1 if failed else 0)
 PY
 }
 
+test_dropbox_offline() {
+    local dir="$TEST_ROOT/offline"
+    local mock_bin="$dir/bin"
+    local output
+
+    mkdir -p "$mock_bin"
+    : > "$dir/線上.ARW"
+    : > "$dir/本機.ARW"
+    : > "$dir/線上.ARW.dataless"
+
+    # stat 在檔案旁有 .dataless 標記時回報 dataless；cat 讀取檔案後移除標記，模擬 Dropbox 下載完成
+    cat > "$mock_bin/stat" <<'MOCK'
+#!/bin/bash
+file="${@: -1}"
+if [ -e "${file}.dataless" ]; then
+    echo "dataless"
+else
+    echo "-"
+fi
+MOCK
+    cat > "$mock_bin/cat" <<'MOCK'
+#!/bin/bash
+[ -n "${MOCK_NO_DOWNLOAD:-}" ] || rm -f "${2}.dataless"
+MOCK
+    chmod +x "$mock_bin/stat" "$mock_bin/cat"
+
+    output=$(PATH="$mock_bin:$PATH" /bin/bash -c 'source "$1"; shift; make_available_offline "$@"' _ \
+        "$ROOT/dropbox_offline.sh" "$dir/本機.ARW" 2>&1) || fail "本機檔案不應下載或失敗：$output"
+    [[ "$output" = *"皆已在本機"* ]] || fail "未回報檔案皆已在本機：$output"
+
+    output=$(PATH="$mock_bin:$PATH" /bin/bash -c 'source "$1"; shift; make_available_offline "$@"' _ \
+        "$ROOT/dropbox_offline.sh" "$dir/本機.ARW" "$dir/線上.ARW" 2>&1) || fail "線上檔案下載失敗：$output"
+    [[ "$output" = *"下載：線上.ARW"* ]] || fail "未下載僅供線上存取的檔案：$output"
+    [[ "$output" != *"下載：本機.ARW"* ]] || fail "不應下載已在本機的檔案：$output"
+    [ ! -e "$dir/線上.ARW.dataless" ] || fail "下載後檔案仍標示為僅供線上存取"
+
+    : > "$dir/線上.ARW.dataless"
+    if output=$(MOCK_NO_DOWNLOAD=1 KAIROS_OFFLINE_VERIFY_SECONDS=0 PATH="$mock_bin:$PATH" \
+        /bin/bash -c 'source "$1"; shift; make_available_offline "$@"' _ "$ROOT/dropbox_offline.sh" "$dir/線上.ARW" 2>&1); then
+        fail "下載未完成時應回傳失敗：$output"
+    fi
+    [[ "$output" = *"無法下載到本機"* ]] || fail "未回報下載失敗：$output"
+}
+
 test_syntax
 test_multi_select
+test_dropbox_offline
 test_afterraw_redo_arguments
 test_afterraw_file_arguments
 test_organize_raw_by_date

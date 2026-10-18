@@ -128,6 +128,8 @@ fi
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 BASE_DIR="/Users/robbie/Dropbox/__攝影"
 CURRENT_EDIT_FILE="$SCRIPT_DIR/.current_photo_edit_dir"
+# shellcheck source=dropbox_offline.sh
+source "$SCRIPT_DIR/dropbox_offline.sh"
 
 if [ "$DO_LOAD_RAW" = true ] && [ -d "$FOLDER_NAME" ]; then
     TARGET_DIR=$(cd "$FOLDER_NAME" && pwd)
@@ -1495,6 +1497,11 @@ if [ "$DO_OPEN_PSD" = true ]; then
     fi
 
     echo ""
+    if ! make_available_offline "${PSD_FILES_FOUND[@]}"; then
+        exit 1
+    fi
+
+    echo ""
     echo "正在用 $PHOTOSHOP_APP_DISPLAY 開啟 PSD 檔案..."
     if ! open_psd_files_in_photoshop "${PSD_FILES_FOUND[@]}"; then
         echo "✗ 無法開啟 PSD 檔案"
@@ -1539,6 +1546,21 @@ if [ -n "$DATE_PREFIX" ]; then
     echo "指定日期：${DATE_PREFIX}（僅處理此前綴的檔案）"
 fi
 echo "共找到 ${#RAW_FILES_FOUND[@]} 個 RAW 檔案"
+
+# Camera Raw 也會讀取 RAW 旁的 .xmp、.acr，一併確保在本機
+OFFLINE_FILES=()
+for offline_raw_file in "${RAW_FILES_FOUND[@]}"; do
+    OFFLINE_FILES+=("$offline_raw_file")
+    for offline_sidecar_ext in xmp acr; do
+        if [ -f "${offline_raw_file%.*}.${offline_sidecar_ext}" ]; then
+            OFFLINE_FILES+=("${offline_raw_file%.*}.${offline_sidecar_ext}")
+        fi
+    done
+done
+echo ""
+if ! make_available_offline "${OFFLINE_FILES[@]}"; then
+    exit 1
+fi
 
 if [ "$DO_LOAD_RAW" = true ]; then
     FILES_TO_OPEN=("${RAW_FILES_FOUND[@]}")
@@ -1689,6 +1711,9 @@ if [ ! -f "$TEMPLATE_FILE" ]; then
 fi
 
 echo "找到模板檔案：__IG 底版.psd"
+if ! make_available_offline "$TEMPLATE_FILE"; then
+    exit 1
+fi
 
 # 定義輸出目標資料夾
 PSD_DIR="$TARGET_DIR/PSD"
