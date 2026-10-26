@@ -124,6 +124,9 @@ photo_projects() {
             if (project == "") {
                 next
             }
+            if (project == "咖啡" || project == "街拍" || project == "夕陽" || project == "橋樑" || project == "人像") {
+                next
+            }
             if (mtime == "D") {
                 listed[project] = 1
                 if (!(project in latest)) {

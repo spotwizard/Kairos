@@ -196,7 +196,10 @@ test_rename_raw() {
 write_dashboard_mocks() {
     local mock_dir="$TEST_ROOT/dashboard"
 
-    mkdir -p "$mock_dir/photos/Stone House/RAW" "$mock_dir/photos/New Project/IG" "$mock_dir/photos/Empty"
+    mkdir -p "$mock_dir/photos/Stone House/RAW" "$mock_dir/photos/New Project/IG" "$mock_dir/photos/Empty" \
+        "$mock_dir/photos/咖啡/RAW" "$mock_dir/photos/街拍" "$mock_dir/photos/夕陽" \
+        "$mock_dir/photos/橋樑" "$mock_dir/photos/人像"
+    touch -t 202608260000 "$mock_dir/photos/咖啡/RAW/photo.ARW"
     touch -t 202608010000 "$mock_dir/photos/Stone House/RAW/photo.ARW" "$mock_dir/photos/Stone House/RAW/photo2.raw"
     touch -t 202608160000 "$mock_dir/photos/New Project/IG/photo.JpEg"
     touch -t 202608200000 "$mock_dir/photos/Stone House/RAW/photo.xmp" "$mock_dir/photos/Stone House"
