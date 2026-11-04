@@ -203,7 +203,7 @@ choose_files() {
     clear_screen
     header
     # gum choose 多選時，沒有勾選就按 Enter 不會選定游標項目，因此改用自訂的多選清單
-    choice=$(/bin/bash "$MULTI_SELECT_SCRIPT" "專案：${target}｜${operation}｜選擇 ${kind} 檔案" \
+    choice=$(/bin/bash "$MULTI_SELECT_SCRIPT" --exclusive-first "專案：${target}｜${operation}｜選擇 ${kind} 檔案" \
         "$all_option" "${files[@]}") || return 1
 
     while IFS= read -r name; do

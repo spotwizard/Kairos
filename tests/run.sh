@@ -257,6 +257,9 @@ MOCK
 #!/usr/bin/env bash
 
 # 以逗號分隔序號模擬勾選，例如 2,3；其他輸入視為按 Esc
+# kairos 必須以 --exclusive-first 呼叫，讓「全部」與個別檔名互斥
+[ "$1" = "--exclusive-first" ] || exit 3
+shift
 printf '%s' "$1" >> "$KAIROS_MENU_LOG"
 shift
 printf '\t%s' "$@" >> "$KAIROS_MENU_LOG"
@@ -563,12 +566,12 @@ def drain(fd, seconds):
                 return
 
 
-def run(keys, options, height="15"):
+def run(keys, options, height="15", flags=()):
     pid, fd = pty.fork()
     if pid == 0:
         os.environ["OUT"] = out_path
         os.environ["KAIROS_MULTI_SELECT_HEIGHT"] = height
-        os.execv("/bin/bash", ["/bin/bash", "-c", 'exec /bin/bash "$0" "$@" > "$OUT"', script, "標題"] + options)
+        os.execv("/bin/bash", ["/bin/bash", "-c", 'exec /bin/bash "$0" "$@" > "$OUT"', script] + list(flags) + ["標題"] + options)
     drain(fd, 0.5)
     for key in keys:
         os.write(fd, key)
@@ -593,11 +596,14 @@ cases = [
     ("向上移動循環到最後一項", [UP, ENTER], ["全部", "甲.ARW", "乙.ARW"], "15", (0, "乙.ARW\n")),
     ("清單超過高度時捲動", [DOWN, DOWN, DOWN, ENTER], ["a", "b", "c", "d", "e"], "2", (0, "d\n")),
     ("Esc 返回", [ESC], ["a", "b"], "15", (1, "")),
+    ("互斥模式勾選全部會取消其他勾選", [DOWN, SPACE, DOWN, SPACE, UP, UP, SPACE, ENTER], ["全部", "甲.ARW", "乙.ARW"], "15", (0, "全部\n"), ["--exclusive-first"]),
+    ("互斥模式勾選檔名會取消全部", [SPACE, DOWN, SPACE, ENTER], ["全部", "甲.ARW", "乙.ARW"], "15", (0, "甲.ARW\n"), ["--exclusive-first"]),
+    ("互斥模式取消勾選不影響其他項目", [DOWN, SPACE, DOWN, SPACE, SPACE, ENTER], ["全部", "甲.ARW", "乙.ARW"], "15", (0, "甲.ARW\n"), ["--exclusive-first"]),
     ("Ctrl+C 中止", [b"\x03"], ["a", "b"], "15", (130, "")),
 ]
 failed = False
-for name, keys, options, height, expected in cases:
-    actual = run(keys, options, height)
+for name, keys, options, height, expected, *flags in cases:
+    actual = run(keys, options, height, flags[0] if flags else ())
     if actual != expected:
         failed = True
         print(f"多選清單：{name}，預期 {expected!r}，實際 {actual!r}")

@@ -5,12 +5,20 @@
 # 選定的項目逐行輸出到 stdout；按 Esc 回傳 1，按 Ctrl+C 回傳 130。
 # 只使用 macOS 內建 bash 3.2 可用的語法。
 #
-# 使用方式：multi_select.sh <標題> <選項>...
+# 加上 --exclusive-first 時，第一個選項（例如「全部 RAW 檔案」）與其他選項互斥：
+# 勾選第一個選項會取消其他勾選，勾選其他選項會取消第一個選項。
+#
+# 使用方式：multi_select.sh [--exclusive-first] <標題> <選項>...
 
 if [ -z "${BASH_VERSION:-}" ] || shopt -oq posix; then
     exec /bin/bash "$0" "$@"
 fi
 
+EXCLUSIVE_FIRST=0
+if [ "${1:-}" = "--exclusive-first" ]; then
+    EXCLUSIVE_FIRST=1
+    shift
+fi
 HEADER="$1"
 shift
 OPTIONS=("$@")
@@ -82,6 +90,21 @@ move_cursor() {
     fi
 }
 
+toggle_cursor() {
+    local i
+
+    CHECKED[CURSOR]=$((1 - CHECKED[CURSOR]))
+    if [ "$EXCLUSIVE_FIRST" -eq 1 ] && [ "${CHECKED[CURSOR]}" -eq 1 ]; then
+        if [ "$CURSOR" -eq 0 ]; then
+            for ((i = 1; i < COUNT; i++)); do
+                CHECKED[i]=0
+            done
+        else
+            CHECKED[0]=0
+        fi
+    fi
+}
+
 finish() {
     clear_drawn
     restore_tty
@@ -111,9 +134,7 @@ while true; do
             ;;
         k) move_cursor -1 ;;
         j) move_cursor 1 ;;
-        " "|x)
-            CHECKED[CURSOR]=$((1 - CHECKED[CURSOR]))
-            ;;
+        " "|x) toggle_cursor ;;
         $'\n'|$'\r')
             break
             ;;
