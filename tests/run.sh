@@ -27,6 +27,7 @@ test_syntax() {
         "$ROOT/afterraw.sh" \
         "$ROOT/multi_select.sh" \
         "$ROOT/dropbox_offline.sh" \
+        "$ROOT/keep_awake.sh" \
         "$ROOT/tests/run.sh" || fail "Shell 語法檢查未通過"
 
     # macOS 內建 bash 3.2 會把緊接在 $變數 後面的中文字元當成變數名稱的一部分，必須寫成 ${變數}
@@ -36,7 +37,8 @@ test_syntax() {
         "$ROOT/rename_raw.sh" \
         "$ROOT/afterraw.sh" \
         "$ROOT/multi_select.sh" \
-        "$ROOT/dropbox_offline.sh"; then
+        "$ROOT/dropbox_offline.sh" \
+        "$ROOT/keep_awake.sh"; then
         fail "變數後面緊接非 ASCII 字元時必須加大括號"
     fi
 }
@@ -296,6 +298,16 @@ MOCK
     done
 }
 
+write_keep_awake_mock() {
+    cat > "$TEST_ROOT/dashboard/keep-awake" <<'MOCK'
+#!/usr/bin/env bash
+
+printf 'keep-awake\n' >> "$KAIROS_KEEP_AWAKE_LOG"
+exec "$@"
+MOCK
+    chmod +x "$TEST_ROOT/dashboard/keep-awake"
+}
+
 set_input_queue() {
     : > "$TEST_ROOT/dashboard/queue"
     for value in "$@"; do
@@ -312,6 +324,8 @@ run_dashboard() {
     KAIROS_RENAME_SCRIPT="$TEST_ROOT/dashboard/rename-worker" \
     KAIROS_AFTERRAW_SCRIPT="$TEST_ROOT/dashboard/afterraw-worker" \
     KAIROS_MULTI_SELECT_SCRIPT="$TEST_ROOT/dashboard/multi-select" \
+    KAIROS_KEEP_AWAKE_SCRIPT="$TEST_ROOT/dashboard/keep-awake" \
+    KAIROS_KEEP_AWAKE_LOG="$TEST_ROOT/dashboard/keep-awake.log" \
     KAIROS_PHOTO_ROOT="$TEST_ROOT/dashboard/photos" \
     KAIROS_CURRENT_EDIT_FILE="$TEST_ROOT/dashboard/current_photo_edit_dir" \
     KAIROS_FAKE_STATUS="${KAIROS_FAKE_STATUS:-0}" \
@@ -329,6 +343,16 @@ expect_dashboard_call() {
 reset_dashboard_log() {
     : > "$TEST_ROOT/dashboard/workers.log"
     : > "$TEST_ROOT/dashboard/menus.log"
+    : > "$TEST_ROOT/dashboard/keep-awake.log"
+}
+
+# 傳輸記憶卡、轉移 RAW、後置輸出要經由防止睡眠程式執行；需要操作畫面的操作不經過
+expect_keep_awake() {
+    if [ "$1" = true ]; then
+        [ -s "$TEST_ROOT/dashboard/keep-awake.log" ] || fail "$2 應經由防止睡眠程式執行"
+    else
+        [ ! -s "$TEST_ROOT/dashboard/keep-awake.log" ] || fail "$2 不應經由防止睡眠程式執行"
+    fi
 }
 
 test_dashboard() {
@@ -336,11 +360,13 @@ test_dashboard() {
     local status=0
 
     write_dashboard_mocks
+    write_keep_awake_mock
 
     reset_dashboard_log
     set_input_queue "1" "$pause" "esc"
     run_dashboard || fail "記憶卡選單執行失敗"
     expect_dashboard_call "organize-worker"
+    expect_keep_awake true "傳輸記憶卡 RAW 檔案"
     [ "$(sed -n '1p' "$TEST_ROOT/dashboard/menus.log")" = $'選擇要進行的程序（ESC 離開）\t1  傳輸記憶卡 RAW 檔案\t2  轉移 RAW 檔案\t3  修圖' ] \
         || fail "主選單應使用方向鍵選單並顯示完整選項"
 
@@ -348,11 +374,13 @@ test_dashboard() {
     set_input_queue "2" "$pause" "esc"
     run_dashboard || fail "Transfer 選單執行失敗"
     expect_dashboard_call "rename-worker"
+    expect_keep_awake true "轉移 RAW 檔案"
 
     reset_dashboard_log
     set_input_queue "3" "1" "1" "y" "esc" "esc" "esc"
     run_dashboard || fail "AfterRAW 重新修圖選單執行失敗"
     expect_dashboard_call $'afterraw-worker\t--redo\tNew Project'
+    expect_keep_awake false "重新修圖"
     grep -F $'confirm\t--default=false' "$TEST_ROOT/dashboard/menus.log" > /dev/null \
         || fail "重新修圖執行前應要求確認，且預設為取消"
 
@@ -365,6 +393,7 @@ test_dashboard() {
     set_input_queue "3" "1" "2" "esc" "esc" "esc"
     run_dashboard || fail "AfterRAW 前置選單執行失敗"
     expect_dashboard_call $'afterraw-worker\t--pre\tNew Project'
+    expect_keep_awake false "前置作業"
     [ "$(sed -n '2p' "$TEST_ROOT/dashboard/menus.log")" = $'選擇修圖專案（ESC 返回主選單）\tNew Project\tStone House\tEmpty' ] \
         || fail "應先列出專案，依照片修改時間排序，忽略上次專案、目錄及 XMP 的修改時間"
     [ "$(sed -n '3p' "$TEST_ROOT/dashboard/menus.log")" = $'專案：New Project（ESC 返回專案清單）\t1  重新修圖\t2  前置作業\t3  載入 RAW\t4  開啟 PSD 檔案\t5  IG＋FB 後置輸出\t6  僅 IG 後置輸出\t7  僅 FB 後置輸出' ] \
@@ -387,26 +416,31 @@ test_dashboard() {
     set_input_queue "3" "2" "3" "1" "esc" "esc" "esc"
     run_dashboard || fail "AfterRAW 載入選單執行失敗"
     expect_dashboard_call $'afterraw-worker\t--load-raw\tStone House'
+    expect_keep_awake false "載入 RAW"
 
     reset_dashboard_log
     set_input_queue "3" "2" "4" "1" "esc" "esc" "esc"
     run_dashboard || fail "AfterRAW 開啟 PSD 選單執行失敗"
     expect_dashboard_call $'afterraw-worker\t--open-psd\tStone House'
+    expect_keep_awake false "開啟 PSD 檔案"
 
     reset_dashboard_log
     set_input_queue "3" "2" "5" "1" "esc" "esc" "esc"
     run_dashboard || fail "AfterRAW IG＋FB 選單執行失敗"
     expect_dashboard_call $'afterraw-worker\tStone House'
+    expect_keep_awake true "IG＋FB 後置輸出"
 
     reset_dashboard_log
     set_input_queue "3" "2" "6" "1" "esc" "esc" "esc"
     run_dashboard || fail "AfterRAW IG 選單執行失敗"
     expect_dashboard_call $'afterraw-worker\t--ig\tStone House'
+    expect_keep_awake true "僅 IG 後置輸出"
 
     reset_dashboard_log
     set_input_queue "3" "2" "7" "1" "esc" "esc" "esc"
     run_dashboard || fail "AfterRAW FB 選單執行失敗"
     expect_dashboard_call $'afterraw-worker\t--fb\tStone House'
+    expect_keep_awake true "僅 FB 後置輸出"
 
     reset_dashboard_log
     set_input_queue "3" "2" "3" "2" "esc" "esc" "esc"
@@ -419,6 +453,7 @@ test_dashboard() {
     set_input_queue "3" "2" "7" "2" "esc" "esc" "esc"
     run_dashboard || fail "AfterRAW 指定 RAW FB 輸出執行失敗"
     expect_dashboard_call $'afterraw-worker\t--fb\t--file\tphoto.ARW\tStone House'
+    expect_keep_awake true "指定 RAW 的 FB 後置輸出"
 
     reset_dashboard_log
     set_input_queue "3" "2" "1" "2" "y" "esc" "esc" "esc"
@@ -723,7 +758,99 @@ MOCK
     [[ "$output" != *"空檔.xmp"* ]] || fail "不應把 0 位元組的 .xmp 視為錯誤：$output"
 }
 
+test_keep_awake() {
+    local dir="$TEST_ROOT/keep_awake"
+    local mock_bin="$dir/bin"
+    local output
+    local status
+    local waited
+    local wrapper_pid
+
+    mkdir -p "$mock_bin"
+    cat > "$mock_bin/sudo" <<'MOCK'
+#!/usr/bin/env bash
+
+non_interactive=false
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        -p) shift 2 ;;
+        -v) [ "${MOCK_SUDO_FAIL:-0}" = "1" ] && exit 1; exit 0 ;;
+        -n) non_interactive=true; shift ;;
+        *) break ;;
+    esac
+done
+[ "$non_interactive" = true ] || exit 2
+exec "$@"
+MOCK
+    cat > "$mock_bin/pmset" <<'MOCK'
+#!/usr/bin/env bash
+
+case "$1" in
+    -g) printf ' SleepDisabled\t\t%s\n hibernatemode\t\t3\n' "$(cat "$MOCK_PMSET_STATE")" ;;
+    -a) [ "$2" = "disablesleep" ] || exit 2; printf '%s' "$3" > "$MOCK_PMSET_STATE" ;;
+    *) exit 2 ;;
+esac
+MOCK
+    chmod +x "$mock_bin/sudo" "$mock_bin/pmset"
+
+    run_keep_awake() {
+        MOCK_PMSET_STATE="$dir/state" KAIROS_SUDO_BIN="$mock_bin/sudo" KAIROS_PMSET_BIN="$mock_bin/pmset" \
+            KAIROS_CAFFEINATE_BIN="$mock_bin/missing-caffeinate" KAIROS_KEEP_AWAKE_WAIT_SECONDS=3 \
+            /bin/bash "$ROOT/keep_awake.sh" "$@" 2>&1
+    }
+
+    # 執行期間關閉睡眠，結束後恢復，並傳回指令的結束狀態
+    printf '0' > "$dir/state"
+    status=0
+    output=$(run_keep_awake /bin/bash -c 'printf "during=%s\n" "$(cat "$1")"; exit 3' child "$dir/state") || status=$?
+    [ "$status" -eq 3 ] || fail "防止睡眠程式應傳回指令的結束狀態（實際 ${status}）：$output"
+    [[ "$output" = *"during=1"* ]] || fail "執行期間應關閉睡眠：$output"
+    [[ "$output" = *"已暫時關閉睡眠"* ]] || fail "未提示已關閉睡眠：$output"
+    [ "$(cat "$dir/state")" = 0 ] || fail "結束後應恢復睡眠設定"
+    [[ "$output" = *"已恢復原本的睡眠設定"* ]] || fail "未提示已恢復睡眠設定：$output"
+
+    # 原本就關閉睡眠時，結束後維持關閉
+    printf '1' > "$dir/state"
+    output=$(run_keep_awake /bin/true) || fail "原本關閉睡眠時執行失敗：$output"
+    [ "$(cat "$dir/state")" = 1 ] || fail "原本已關閉睡眠時，結束後不應改回會睡眠"
+
+    # 取不到管理者權限時仍執行指令，並提示不要蓋上螢幕
+    printf '0' > "$dir/state"
+    output=$(MOCK_SUDO_FAIL=1 run_keep_awake /bin/bash -c 'echo ran') || fail "取不到權限時仍應執行指令：$output"
+    [[ "$output" = *"ran"* ]] || fail "取不到權限時沒有執行指令：$output"
+    [[ "$output" = *"請不要蓋上螢幕"* ]] || fail "取不到權限時應提示不要蓋上螢幕：$output"
+    [ "$(cat "$dir/state")" = 0 ] || fail "取不到權限時不應改動睡眠設定"
+
+    # 防止睡眠程式被強制結束時，仍會恢復睡眠設定
+    printf '0' > "$dir/state"
+    MOCK_PMSET_STATE="$dir/state" KAIROS_SUDO_BIN="$mock_bin/sudo" KAIROS_PMSET_BIN="$mock_bin/pmset" \
+        KAIROS_CAFFEINATE_BIN="$mock_bin/missing-caffeinate" \
+        /bin/bash "$ROOT/keep_awake.sh" /bin/sleep 30 > /dev/null 2>&1 &
+    wrapper_pid=$!
+    waited=0
+    while [ "$(cat "$dir/state")" != 1 ]; do
+        [ "$waited" -lt 50 ] || fail "強制結束測試：未關閉睡眠"
+        sleep 0.1
+        waited=$((waited + 1))
+    done
+    pkill -P "$wrapper_pid" sleep 2> /dev/null
+    kill -9 "$wrapper_pid"
+    wait "$wrapper_pid" 2> /dev/null
+    waited=0
+    while [ "$(cat "$dir/state")" != 0 ]; do
+        [ "$waited" -lt 50 ] || fail "防止睡眠程式被強制結束後，睡眠設定未恢復"
+        sleep 0.1
+        waited=$((waited + 1))
+    done
+
+    # 沒有 pmset（不是 macOS）時直接執行指令
+    output=$(KAIROS_PMSET_BIN="$mock_bin/missing-pmset" /bin/bash "$ROOT/keep_awake.sh" /bin/bash -c 'echo direct' 2>&1) \
+        || fail "沒有 pmset 時執行失敗：$output"
+    [ "$output" = "direct" ] || fail "沒有 pmset 時應直接執行指令：$output"
+}
+
 test_syntax
+test_keep_awake
 test_multi_select
 test_dropbox_offline
 test_afterraw_redo_arguments

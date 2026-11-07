@@ -22,6 +22,8 @@ ORGANIZE_SCRIPT="${KAIROS_ORGANIZE_SCRIPT:-$SCRIPT_DIR/organize_raw_by_date.sh}"
 RENAME_SCRIPT="${KAIROS_RENAME_SCRIPT:-$SCRIPT_DIR/rename_raw.sh}"
 AFTERRAW_SCRIPT="${KAIROS_AFTERRAW_SCRIPT:-$SCRIPT_DIR/afterraw.sh}"
 MULTI_SELECT_SCRIPT="${KAIROS_MULTI_SELECT_SCRIPT:-$SCRIPT_DIR/multi_select.sh}"
+# 傳輸記憶卡、轉移 RAW、後置輸出不需要操作畫面，經由此程式執行，蓋上螢幕後仍會繼續
+KEEP_AWAKE_SCRIPT="${KAIROS_KEEP_AWAKE_SCRIPT:-$SCRIPT_DIR/keep_awake.sh}"
 PHOTO_ROOT="${KAIROS_PHOTO_ROOT:-/Users/robbie/Dropbox/__攝影}"
 LAST_STATUS=0
 SELECTED_TARGET=""
@@ -251,6 +253,7 @@ afterraw_menu() {
     local title
     local kind
     local file_name
+    local keep_awake
     local -a args
 
     while true; do
@@ -268,14 +271,16 @@ afterraw_menu() {
                 "6  僅 IG 後置輸出" \
                 "7  僅 FB 後置輸出") || break
 
+            # 前置作業要點擊 Camera Raw 畫面，螢幕蓋上後無法進行；只有後置輸出防止睡眠
+            keep_awake=false
             case "$choice" in
                 "1  重新修圖") title="AfterRAW｜重新修圖"; args=(--redo) ;;
                 "2  前置作業") title="AfterRAW｜前置作業"; args=(--pre) ;;
                 "3  載入 RAW") title="AfterRAW｜載入 RAW"; args=(--load-raw) ;;
                 "4  開啟 PSD 檔案") title="AfterRAW｜開啟 PSD 檔案"; args=(--open-psd) ;;
-                "5  IG＋FB 後置輸出") title="AfterRAW｜IG＋FB 後置輸出"; args=() ;;
-                "6  僅 IG 後置輸出") title="AfterRAW｜僅 IG 後置輸出"; args=(--ig) ;;
-                "7  僅 FB 後置輸出") title="AfterRAW｜僅 FB 後置輸出"; args=(--fb) ;;
+                "5  IG＋FB 後置輸出") title="AfterRAW｜IG＋FB 後置輸出"; args=(); keep_awake=true ;;
+                "6  僅 IG 後置輸出") title="AfterRAW｜僅 IG 後置輸出"; args=(--ig); keep_awake=true ;;
+                "7  僅 FB 後置輸出") title="AfterRAW｜僅 FB 後置輸出"; args=(--fb); keep_awake=true ;;
                 *) continue ;;
             esac
 
@@ -295,7 +300,11 @@ afterraw_menu() {
             fi
             args+=("$target")
 
-            run_worker --return-menu "$title" /bin/bash "$AFTERRAW_SCRIPT" "${args[@]}"
+            if [ "$keep_awake" = true ]; then
+                run_worker --return-menu "$title" /bin/bash "$KEEP_AWAKE_SCRIPT" /bin/bash "$AFTERRAW_SCRIPT" "${args[@]}"
+            else
+                run_worker --return-menu "$title" /bin/bash "$AFTERRAW_SCRIPT" "${args[@]}"
+            fi
         done
     done
 }
@@ -323,10 +332,10 @@ main() {
 
         case "$choice" in
             "1  傳輸記憶卡 RAW 檔案")
-                run_worker "傳輸記憶卡 RAW 檔案" /bin/bash "$ORGANIZE_SCRIPT"
+                run_worker "傳輸記憶卡 RAW 檔案" /bin/bash "$KEEP_AWAKE_SCRIPT" /bin/bash "$ORGANIZE_SCRIPT"
                 ;;
             "2  轉移 RAW 檔案")
-                run_worker "轉移 RAW 檔案" /bin/bash "$RENAME_SCRIPT"
+                run_worker "轉移 RAW 檔案" /bin/bash "$KEEP_AWAKE_SCRIPT" /bin/bash "$RENAME_SCRIPT"
                 ;;
             "3  修圖")
                 afterraw_menu
