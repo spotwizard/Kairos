@@ -26,6 +26,7 @@ test_syntax() {
         "$ROOT/rename_raw.sh" \
         "$ROOT/afterraw.sh" \
         "$ROOT/multi_select.sh" \
+        "$ROOT/search_select.sh" \
         "$ROOT/dropbox_offline.sh" \
         "$ROOT/keep_awake.sh" \
         "$ROOT/tests/run.sh" || fail "Shell 語法檢查未通過"
@@ -37,6 +38,7 @@ test_syntax() {
         "$ROOT/rename_raw.sh" \
         "$ROOT/afterraw.sh" \
         "$ROOT/multi_select.sh" \
+        "$ROOT/search_select.sh" \
         "$ROOT/dropbox_offline.sh" \
         "$ROOT/keep_awake.sh"; then
         fail "變數後面緊接非 ASCII 字元時必須加大括號"
@@ -283,6 +285,27 @@ done
 MOCK
     chmod +x "$mock_dir/multi-select"
 
+    # 以序號模擬選定專案；其他輸入視為按 Esc
+    cat > "$mock_dir/search-select" <<'MOCK'
+#!/usr/bin/env bash
+
+printf '%s' "$1" >> "$KAIROS_MENU_LOG"
+shift
+printf '\t%s' "$@" >> "$KAIROS_MENU_LOG"
+printf '\n' >> "$KAIROS_MENU_LOG"
+IFS= read -r selection || exit 1
+index=1
+for option in "$@"; do
+    if [ "$selection" = "$index" ]; then
+        printf '%s\n' "$option"
+        exit 0
+    fi
+    index=$((index + 1))
+done
+exit 1
+MOCK
+    chmod +x "$mock_dir/search-select"
+
     for worker in organize-worker rename-worker afterraw-worker; do
         cat > "$mock_dir/$worker" <<'MOCK'
 #!/usr/bin/env bash
@@ -324,6 +347,7 @@ run_dashboard() {
     KAIROS_RENAME_SCRIPT="$TEST_ROOT/dashboard/rename-worker" \
     KAIROS_AFTERRAW_SCRIPT="$TEST_ROOT/dashboard/afterraw-worker" \
     KAIROS_MULTI_SELECT_SCRIPT="$TEST_ROOT/dashboard/multi-select" \
+    KAIROS_SEARCH_SELECT_SCRIPT="$TEST_ROOT/dashboard/search-select" \
     KAIROS_KEEP_AWAKE_SCRIPT="$TEST_ROOT/dashboard/keep-awake" \
     KAIROS_KEEP_AWAKE_LOG="$TEST_ROOT/dashboard/keep-awake.log" \
     KAIROS_PHOTO_ROOT="$TEST_ROOT/dashboard/photos" \
@@ -394,7 +418,7 @@ test_dashboard() {
     run_dashboard || fail "AfterRAW 前置選單執行失敗"
     expect_dashboard_call $'afterraw-worker\t--pre\tNew Project'
     expect_keep_awake false "前置作業"
-    [ "$(sed -n '2p' "$TEST_ROOT/dashboard/menus.log")" = $'選擇修圖專案（ESC 返回主選單）\tNew Project\tStone House\tEmpty' ] \
+    [ "$(sed -n '2p' "$TEST_ROOT/dashboard/menus.log")" = $'選擇修圖專案（輸入文字搜尋，ESC 返回主選單）\tNew Project\tStone House\tEmpty' ] \
         || fail "應先列出專案，依照片修改時間排序，忽略上次專案、目錄及 XMP 的修改時間"
     [ "$(sed -n '3p' "$TEST_ROOT/dashboard/menus.log")" = $'專案：New Project（ESC 返回專案清單）\t1  重新修圖\t2  前置作業\t3  載入 RAW\t4  開啟 PSD 檔案\t5  IG＋FB 後置輸出\t6  僅 IG 後置輸出\t7  僅 FB 後置輸出' ] \
         || fail "選定專案後的操作選項不符"
@@ -501,7 +525,7 @@ test_dashboard() {
     set_input_queue "3" "esc" "esc"
     run_dashboard || fail "AfterRAW 取消返回失敗"
     [ ! -s "$TEST_ROOT/dashboard/workers.log" ] || fail "取消選單不應執行 worker"
-    [ "$(cut -f1 "$TEST_ROOT/dashboard/menus.log" | tr '\n' '|')" = "選擇要進行的程序（ESC 離開）|選擇修圖專案（ESC 返回主選單）|選擇要進行的程序（ESC 離開）|" ] \
+    [ "$(cut -f1 "$TEST_ROOT/dashboard/menus.log" | tr '\n' '|')" = "選擇要進行的程序（ESC 離開）|選擇修圖專案（輸入文字搜尋，ESC 返回主選單）|選擇要進行的程序（ESC 離開）|" ] \
         || fail "專案清單按 ESC 應返回主選單"
 
     reset_dashboard_log
@@ -520,7 +544,7 @@ test_dashboard() {
     set_input_queue "3" "1" "esc" "esc" "esc"
     run_dashboard || fail "取消操作後返回專案清單失敗"
     [ ! -s "$TEST_ROOT/dashboard/workers.log" ] || fail "尚未選定操作不應執行 worker"
-    [ "$(cut -f1 "$TEST_ROOT/dashboard/menus.log" | tr '\n' '|')" = "選擇要進行的程序（ESC 離開）|選擇修圖專案（ESC 返回主選單）|專案：New Project（ESC 返回專案清單）|選擇修圖專案（ESC 返回主選單）|選擇要進行的程序（ESC 離開）|" ] \
+    [ "$(cut -f1 "$TEST_ROOT/dashboard/menus.log" | tr '\n' '|')" = "選擇要進行的程序（ESC 離開）|選擇修圖專案（輸入文字搜尋，ESC 返回主選單）|專案：New Project（ESC 返回專案清單）|選擇修圖專案（輸入文字搜尋，ESC 返回主選單）|選擇要進行的程序（ESC 離開）|" ] \
         || fail "操作選單按 ESC 應返回專案清單，專案清單再按 ESC 返回主選單"
 
     mv "$TEST_ROOT/dashboard/photos" "$TEST_ROOT/dashboard/saved-photos"
@@ -642,6 +666,80 @@ for name, keys, options, height, expected, *flags in cases:
     if actual != expected:
         failed = True
         print(f"多選清單：{name}，預期 {expected!r}，實際 {actual!r}")
+sys.exit(1 if failed else 0)
+PY
+}
+
+test_search_select() {
+    if ! command -v python3 > /dev/null 2>&1; then
+        printf '略過搜尋清單按鍵測試：找不到 python3\n'
+        return 0
+    fi
+
+    python3 - "$ROOT/search_select.sh" "$TEST_ROOT/search_select.out" <<'PY' || fail "搜尋清單按鍵測試未通過"
+import os, pty, select, sys, time
+
+script, out_path = sys.argv[1], sys.argv[2]
+
+
+def drain(fd, seconds):
+    end = time.time() + seconds
+    while time.time() < end:
+        ready, _, _ = select.select([fd], [], [], 0.02)
+        if ready:
+            try:
+                os.read(fd, 4096)
+            except OSError:
+                return
+
+
+def run(keys, options, height="15"):
+    pid, fd = pty.fork()
+    if pid == 0:
+        os.environ["OUT"] = out_path
+        os.environ["KAIROS_SEARCH_SELECT_HEIGHT"] = height
+        os.execv("/bin/bash", ["/bin/bash", "-c", 'exec /bin/bash "$0" "$@" > "$OUT"', script, "標題"] + options)
+    drain(fd, 0.5)
+    for key in keys:
+        os.write(fd, key)
+        drain(fd, 0.3)
+    end = time.time() + 3
+    while time.time() < end:
+        done, raw = os.waitpid(pid, os.WNOHANG)
+        if done:
+            with open(out_path) as output:
+                return raw >> 8, output.read()
+        drain(fd, 0.05)
+    os.kill(pid, 9)
+    os.waitpid(pid, 0)
+    return "timeout", ""
+
+
+DOWN, UP, ENTER, ESC, BACKSPACE = b"\x1b[B", b"\x1b[A", b"\r", b"\x1b", b"\x7f"
+PROJECTS = ["石屋 2026", "Stone House", "New Project", "海邊石頭"]
+cases = [
+    ("沒有輸入就按 Enter 選定第一項", [ENTER], PROJECTS, "15", (0, "石屋 2026\n")),
+    ("上下鍵移動", [DOWN, DOWN, ENTER], PROJECTS, "15", (0, "New Project\n")),
+    ("向上移動循環到最後一項", [UP, ENTER], PROJECTS, "15", (0, "海邊石頭\n")),
+    ("英文搜尋不分大小寫", [b"s", b"T", b"o", ENTER], PROJECTS, "15", (0, "Stone House\n")),
+    ("中文搜尋", ["石".encode(), DOWN, ENTER], PROJECTS, "15", (0, "海邊石頭\n")),
+    ("一次送出多個中文字", ["海邊".encode(), ENTER], PROJECTS, "15", (0, "海邊石頭\n")),
+    ("多個關鍵字必須全部符合", ["石 2026".encode(), ENTER], PROJECTS, "15", (0, "石屋 2026\n")),
+    ("Backspace 刪除一個中文字", ["屋".encode(), BACKSPACE, "頭".encode(), ENTER], PROJECTS, "15", (0, "海邊石頭\n")),
+    ("沒有符合時按 Enter 不選定", [b"zzz", ENTER, BACKSPACE * 3, b"new", ENTER], PROJECTS, "15", (0, "New Project\n")),
+    ("清單超過高度時捲動", [DOWN, DOWN, DOWN, ENTER], ["a", "b", "c", "d", "e"], "2", (0, "d\n")),
+    ("Delete 鍵不會輸入文字", [b"\x1b[3~", b"new", ENTER], PROJECTS, "15", (0, "New Project\n")),
+    ("j、k 是搜尋文字", [b"k", ENTER], ["j1", "k1"], "15", (0, "k1\n")),
+    ("輸入搜尋後 Esc 直接返回", [b"st", ESC], PROJECTS, "15", (1, "")),
+    ("Esc 返回", [ESC], PROJECTS, "15", (1, "")),
+    ("Ctrl+C 中止", [b"\x03"], PROJECTS, "15", (130, "")),
+]
+failed = False
+for name, keys, options, height, expected in cases:
+    actual = run(keys, options, height)
+    if actual != expected:
+        failed = True
+        print(f"搜尋清單：{name}，預期 {expected!r}，實際 {actual!r}")
 sys.exit(1 if failed else 0)
 PY
 }
@@ -852,6 +950,7 @@ MOCK
 test_syntax
 test_keep_awake
 test_multi_select
+test_search_select
 test_dropbox_offline
 test_afterraw_redo_arguments
 test_afterraw_file_arguments

@@ -22,6 +22,7 @@ ORGANIZE_SCRIPT="${KAIROS_ORGANIZE_SCRIPT:-$SCRIPT_DIR/organize_raw_by_date.sh}"
 RENAME_SCRIPT="${KAIROS_RENAME_SCRIPT:-$SCRIPT_DIR/rename_raw.sh}"
 AFTERRAW_SCRIPT="${KAIROS_AFTERRAW_SCRIPT:-$SCRIPT_DIR/afterraw.sh}"
 MULTI_SELECT_SCRIPT="${KAIROS_MULTI_SELECT_SCRIPT:-$SCRIPT_DIR/multi_select.sh}"
+SEARCH_SELECT_SCRIPT="${KAIROS_SEARCH_SELECT_SCRIPT:-$SCRIPT_DIR/search_select.sh}"
 # 傳輸記憶卡、轉移 RAW、後置輸出不需要操作畫面，經由此程式執行，蓋上螢幕後仍會繼續
 KEEP_AWAKE_SCRIPT="${KAIROS_KEEP_AWAKE_SCRIPT:-$SCRIPT_DIR/keep_awake.sh}"
 PHOTO_ROOT="${KAIROS_PHOTO_ROOT:-/Users/robbie/Dropbox/__攝影}"
@@ -163,8 +164,9 @@ choose_photo_target() {
         return 1
     fi
 
-    SELECTED_TARGET=$("$GUM_BIN" choose --header "選擇修圖專案（ESC 返回主選單）" --height 15 \
-        -- "${projects[@]}") || return 1
+    # gum choose 不能打字搜尋；gum filter 在新版要按兩次 ESC 才會返回，因此改用自訂的搜尋清單
+    SELECTED_TARGET=$(/bin/bash "$SEARCH_SELECT_SCRIPT" "選擇修圖專案（輸入文字搜尋，ESC 返回主選單）" \
+        "${projects[@]}") || return 1
     [ -n "$SELECTED_TARGET" ]
 }
 
