@@ -204,6 +204,9 @@ write_dashboard_mocks() {
         "$mock_dir/photos/咖啡/RAW" "$mock_dir/photos/街拍" "$mock_dir/photos/夕陽" \
         "$mock_dir/photos/橋樑" "$mock_dir/photos/人像"
     touch -t 202608260000 "$mock_dir/photos/咖啡/RAW/photo.ARW"
+    # 「__」加數字開頭的目錄要排除；「__」加非數字、單一底線加數字的目錄仍列出
+    mkdir -p "$mock_dir/photos/__2025/RAW" "$mock_dir/photos/__01 舊案" "$mock_dir/photos/__Archive" "$mock_dir/photos/_1 Note"
+    touch -t 202608270000 "$mock_dir/photos/__2025/RAW/photo.ARW"
     touch -t 202608010000 "$mock_dir/photos/Stone House/RAW/photo.ARW" "$mock_dir/photos/Stone House/RAW/photo2.raw"
     touch -t 202608160000 "$mock_dir/photos/New Project/IG/photo.JpEg"
     touch -t 202608200000 "$mock_dir/photos/Stone House/RAW/photo.xmp" "$mock_dir/photos/Stone House"
@@ -418,8 +421,8 @@ test_dashboard() {
     run_dashboard || fail "AfterRAW 前置選單執行失敗"
     expect_dashboard_call $'afterraw-worker\t--pre\tNew Project'
     expect_keep_awake false "前置作業"
-    [ "$(sed -n '2p' "$TEST_ROOT/dashboard/menus.log")" = $'選擇修圖專案（輸入文字搜尋，ESC 返回主選單）\tNew Project\tStone House\tEmpty' ] \
-        || fail "應先列出專案，依照片修改時間排序，忽略上次專案、目錄及 XMP 的修改時間"
+    [ "$(sed -n '2p' "$TEST_ROOT/dashboard/menus.log")" = $'選擇修圖專案（輸入文字搜尋，ESC 返回主選單）\tNew Project\tStone House\tEmpty\t_1 Note\t__Archive' ] \
+        || fail "應先列出專案，依照片修改時間排序，忽略上次專案、目錄及 XMP 的修改時間，並排除「__」加數字開頭的目錄"
     [ "$(sed -n '3p' "$TEST_ROOT/dashboard/menus.log")" = $'專案：New Project（ESC 返回專案清單）\t1  重新修圖\t2  前置作業\t3  載入 RAW\t4  開啟 PSD 檔案\t5  IG＋FB 後置輸出\t6  僅 IG 後置輸出\t7  僅 FB 後置輸出' ] \
         || fail "選定專案後的操作選項不符"
     [ "$(sed -n '4p' "$TEST_ROOT/dashboard/menus.log")" = $'專案：New Project（ESC 返回專案清單）\t1  重新修圖\t2  前置作業\t3  載入 RAW\t4  開啟 PSD 檔案\t5  IG＋FB 後置輸出\t6  僅 IG 後置輸出\t7  僅 FB 後置輸出' ] \
