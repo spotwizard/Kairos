@@ -268,32 +268,33 @@ afterraw_menu() {
         while true; do
             clear_screen
             header
-            choice=$("$GUM_BIN" choose --header "專案：${target}（ESC 返回專案清單）" --height 7 -- \
+            choice=$("$GUM_BIN" choose --header "專案：${target}（ESC 返回專案清單）" --height 9 -- \
                 "1  重新修圖" \
                 "2  前置作業" \
                 "3  載入 RAW" \
                 "4  開啟 PSD 檔案" \
-                "5  IG＋FB 後置輸出" \
-                "6  僅 IG 後置輸出" \
-                "7  僅 FB 後置輸出") || break
+                "5  輸出PSD+IG+FB" \
+                "6  輸出PSD" \
+                "7  輸出IG+FB" \
+                "8  輸出IG" \
+                "9  輸出FB") || break
 
-            # 前置作業要點擊 Camera Raw 畫面，螢幕蓋上後無法進行；只有後置輸出防止睡眠
+            # 前置作業要點擊 Camera Raw 畫面，螢幕蓋上後無法進行；只有輸出 PSD、IG、FB 防止睡眠
+            # 輸出PSD 系列根據 RAW 重新產生，列出 RAW 檔；只輸出 IG、FB 時根據現有 PSD 產生，列出 PSD 檔
             keep_awake=false
+            kind="RAW"
             case "$choice" in
                 "1  重新修圖") title="AfterRAW｜重新修圖"; args=(--redo) ;;
                 "2  前置作業") title="AfterRAW｜前置作業"; args=(--pre) ;;
                 "3  載入 RAW") title="AfterRAW｜載入 RAW"; args=(--load-raw) ;;
-                "4  開啟 PSD 檔案") title="AfterRAW｜開啟 PSD 檔案"; args=(--open-psd) ;;
-                "5  IG＋FB 後置輸出") title="AfterRAW｜IG＋FB 後置輸出"; args=(); keep_awake=true ;;
-                "6  僅 IG 後置輸出") title="AfterRAW｜僅 IG 後置輸出"; args=(--ig); keep_awake=true ;;
-                "7  僅 FB 後置輸出") title="AfterRAW｜僅 FB 後置輸出"; args=(--fb); keep_awake=true ;;
+                "4  開啟 PSD 檔案") title="AfterRAW｜開啟 PSD 檔案"; args=(--open-psd); kind="PSD" ;;
+                "5  輸出PSD+IG+FB") title="AfterRAW｜輸出PSD+IG+FB"; args=(); keep_awake=true ;;
+                "6  輸出PSD") title="AfterRAW｜輸出PSD"; args=(--make-psd); keep_awake=true ;;
+                "7  輸出IG+FB") title="AfterRAW｜輸出IG+FB"; args=(--ig --fb); kind="PSD"; keep_awake=true ;;
+                "8  輸出IG") title="AfterRAW｜輸出IG"; args=(--ig); kind="PSD"; keep_awake=true ;;
+                "9  輸出FB") title="AfterRAW｜輸出FB"; args=(--fb); kind="PSD"; keep_awake=true ;;
                 *) continue ;;
             esac
-
-            kind="RAW"
-            if [ "${args[0]:-}" = "--open-psd" ]; then
-                kind="PSD"
-            fi
             choose_files "$target" "${choice#*  }" "$kind" || continue
             if [ "${args[0]:-}" = "--redo" ]; then
                 confirm_redo "$target" || continue

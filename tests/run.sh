@@ -423,9 +423,9 @@ test_dashboard() {
     expect_keep_awake false "前置作業"
     [ "$(sed -n '2p' "$TEST_ROOT/dashboard/menus.log")" = $'選擇修圖專案（輸入文字搜尋，ESC 返回主選單）\tNew Project\tStone House\tEmpty\t_1 Note\t__Archive' ] \
         || fail "應先列出專案，依照片修改時間排序，忽略上次專案、目錄及 XMP 的修改時間，並排除「__」加數字開頭的目錄"
-    [ "$(sed -n '3p' "$TEST_ROOT/dashboard/menus.log")" = $'專案：New Project（ESC 返回專案清單）\t1  重新修圖\t2  前置作業\t3  載入 RAW\t4  開啟 PSD 檔案\t5  IG＋FB 後置輸出\t6  僅 IG 後置輸出\t7  僅 FB 後置輸出' ] \
+    [ "$(sed -n '3p' "$TEST_ROOT/dashboard/menus.log")" = $'專案：New Project（ESC 返回專案清單）\t1  重新修圖\t2  前置作業\t3  載入 RAW\t4  開啟 PSD 檔案\t5  輸出PSD+IG+FB\t6  輸出PSD\t7  輸出IG+FB\t8  輸出IG\t9  輸出FB' ] \
         || fail "選定專案後的操作選項不符"
-    [ "$(sed -n '4p' "$TEST_ROOT/dashboard/menus.log")" = $'專案：New Project（ESC 返回專案清單）\t1  重新修圖\t2  前置作業\t3  載入 RAW\t4  開啟 PSD 檔案\t5  IG＋FB 後置輸出\t6  僅 IG 後置輸出\t7  僅 FB 後置輸出' ] \
+    [ "$(sed -n '4p' "$TEST_ROOT/dashboard/menus.log")" = $'專案：New Project（ESC 返回專案清單）\t1  重新修圖\t2  前置作業\t3  載入 RAW\t4  開啟 PSD 檔案\t5  輸出PSD+IG+FB\t6  輸出PSD\t7  輸出IG+FB\t8  輸出IG\t9  輸出FB' ] \
         || fail "AfterRAW 程序完成後應自動返回目前專案的操作選單"
     ! grep -F "按 Enter 返回儀表板" "$TEST_ROOT/dashboard/output.log" > /dev/null \
         || fail "AfterRAW 程序完成後不應要求按 Enter 返回儀表板"
@@ -453,21 +453,39 @@ test_dashboard() {
 
     reset_dashboard_log
     set_input_queue "3" "2" "5" "1" "esc" "esc" "esc"
-    run_dashboard || fail "AfterRAW IG＋FB 選單執行失敗"
+    run_dashboard || fail "AfterRAW 輸出PSD+IG+FB 選單執行失敗"
     expect_dashboard_call $'afterraw-worker\tStone House'
-    expect_keep_awake true "IG＋FB 後置輸出"
+    expect_keep_awake true "輸出PSD+IG+FB"
+    [ "$(sed -n '4p' "$TEST_ROOT/dashboard/menus.log")" = $'專案：Stone House｜輸出PSD+IG+FB｜選擇 RAW 檔案\t全部 RAW 檔案\tphoto.ARW\tphoto2.raw' ] \
+        || fail "輸出PSD+IG+FB 根據 RAW 產生，應列出 RAW 檔名"
 
     reset_dashboard_log
     set_input_queue "3" "2" "6" "1" "esc" "esc" "esc"
-    run_dashboard || fail "AfterRAW IG 選單執行失敗"
-    expect_dashboard_call $'afterraw-worker\t--ig\tStone House'
-    expect_keep_awake true "僅 IG 後置輸出"
+    run_dashboard || fail "AfterRAW 輸出PSD 選單執行失敗"
+    expect_dashboard_call $'afterraw-worker\t--make-psd\tStone House'
+    expect_keep_awake true "輸出PSD"
+    [ "$(sed -n '4p' "$TEST_ROOT/dashboard/menus.log")" = $'專案：Stone House｜輸出PSD｜選擇 RAW 檔案\t全部 RAW 檔案\tphoto.ARW\tphoto2.raw' ] \
+        || fail "輸出PSD 根據 RAW 產生，應列出 RAW 檔名"
 
     reset_dashboard_log
     set_input_queue "3" "2" "7" "1" "esc" "esc" "esc"
-    run_dashboard || fail "AfterRAW FB 選單執行失敗"
+    run_dashboard || fail "AfterRAW 輸出IG+FB 選單執行失敗"
+    expect_dashboard_call $'afterraw-worker\t--ig\t--fb\tStone House'
+    expect_keep_awake true "輸出IG+FB"
+    [ "$(sed -n '4p' "$TEST_ROOT/dashboard/menus.log")" = $'專案：Stone House｜輸出IG+FB｜選擇 PSD 檔案\t全部 PSD 檔案\tother.PSD\tphoto.psd' ] \
+        || fail "輸出IG+FB 根據 PSD 產生，應列出 PSD 檔名"
+
+    reset_dashboard_log
+    set_input_queue "3" "2" "8" "1" "esc" "esc" "esc"
+    run_dashboard || fail "AfterRAW 輸出IG 選單執行失敗"
+    expect_dashboard_call $'afterraw-worker\t--ig\tStone House'
+    expect_keep_awake true "輸出IG"
+
+    reset_dashboard_log
+    set_input_queue "3" "2" "9" "1" "esc" "esc" "esc"
+    run_dashboard || fail "AfterRAW 輸出FB 選單執行失敗"
     expect_dashboard_call $'afterraw-worker\t--fb\tStone House'
-    expect_keep_awake true "僅 FB 後置輸出"
+    expect_keep_awake true "輸出FB"
 
     reset_dashboard_log
     set_input_queue "3" "2" "3" "2" "esc" "esc" "esc"
@@ -477,10 +495,18 @@ test_dashboard() {
         || fail "RAW 檔案選單應列出全部選項與 RAW 檔名，以 ESC 返回，且不列出 sidecar"
 
     reset_dashboard_log
-    set_input_queue "3" "2" "7" "2" "esc" "esc" "esc"
-    run_dashboard || fail "AfterRAW 指定 RAW FB 輸出執行失敗"
-    expect_dashboard_call $'afterraw-worker\t--fb\t--file\tphoto.ARW\tStone House'
-    expect_keep_awake true "指定 RAW 的 FB 後置輸出"
+    set_input_queue "3" "2" "6" "2" "esc" "esc" "esc"
+    run_dashboard || fail "AfterRAW 指定 RAW 輸出PSD 執行失敗"
+    expect_dashboard_call $'afterraw-worker\t--make-psd\t--file\tphoto.ARW\tStone House'
+    expect_keep_awake true "指定 RAW 的輸出PSD"
+
+    reset_dashboard_log
+    set_input_queue "3" "2" "9" "3" "esc" "esc" "esc"
+    run_dashboard || fail "AfterRAW 指定 PSD 輸出FB 執行失敗"
+    expect_dashboard_call $'afterraw-worker\t--fb\t--file\tphoto.psd\tStone House'
+    expect_keep_awake true "指定 PSD 的輸出FB"
+    grep -F "AfterRAW｜輸出FB｜photo.psd" "$TEST_ROOT/dashboard/output.log" > /dev/null \
+        || fail "指定 PSD 輸出FB 時程序標題應顯示 PSD 檔名"
 
     reset_dashboard_log
     set_input_queue "3" "2" "1" "2" "y" "esc" "esc" "esc"
@@ -532,7 +558,7 @@ test_dashboard() {
         || fail "專案清單按 ESC 應返回主選單"
 
     reset_dashboard_log
-    set_input_queue "3" "1" "esc" "2" "6" "1" "esc" "esc" "esc"
+    set_input_queue "3" "1" "esc" "2" "8" "1" "esc" "esc" "esc"
     run_dashboard || fail "操作選單 ESC 後重新選擇專案失敗"
     expect_dashboard_call $'afterraw-worker\t--ig\tStone House'
     [ "$(wc -l < "$TEST_ROOT/dashboard/menus.log" | tr -d ' ')" = 9 ] \
@@ -603,6 +629,32 @@ test_afterraw_file_arguments() {
         fail "開啟 PSD 時 --file 指定 RAW 檔應該失敗"
     fi
     [[ "$output" = *"--open-psd 的 --file 必須是 PSD 目錄內的 .psd 檔名"* ]] || fail "未回報開啟 PSD 的 --file 副檔名錯誤：$output"
+
+    # 只輸出 IG、FB 時根據 PSD 產生，--file 必須是 PSD；輸出 PSD 時根據 RAW 產生，--file 必須是 RAW
+    if output=$(/bin/bash "$ROOT/afterraw.sh" --ig --fb --file 20260815_IMG0001.ARW "專案" 2>&1); then
+        fail "根據 PSD 輸出 IG／FB 時 --file 指定 RAW 檔應該失敗"
+    fi
+    [[ "$output" = *"根據 PSD 輸出 IG／FB 時，--file 必須是 PSD 目錄內的 .psd 檔名"* ]] || fail "未回報輸出 IG／FB 的 --file 副檔名錯誤：$output"
+
+    if output=$(/bin/bash "$ROOT/afterraw.sh" --make-psd --file 20260815_IMG0001.psd "專案" 2>&1); then
+        fail "輸出 PSD 時 --file 指定 PSD 檔應該失敗"
+    fi
+    [[ "$output" = *"--file 必須是 RAW 目錄內的 .ARW 或 .RAW 檔名"* ]] || fail "未回報輸出 PSD 的 --file 副檔名錯誤：$output"
+
+    if output=$(/bin/bash "$ROOT/afterraw.sh" --make-psd --file 20260815_IMG0001.ARW --file 20260815_IMG0002.ARW "/nonexistent/專案" 2>&1); then
+        fail "找不到專案資料夾應該失敗"
+    fi
+    [[ "$output" = *"找不到資料夾"* ]] || fail "輸出 PSD 搭配 RAW 檔名應通過參數檢查：$output"
+
+    if output=$(/bin/bash "$ROOT/afterraw.sh" --pre --make-psd "專案" 2>&1); then
+        fail "--pre 搭配 --make-psd 應該失敗"
+    fi
+    [[ "$output" = *"--pre 是獨立前置模式"* ]] || fail "未回報 --pre 與 --make-psd 衝突：$output"
+
+    if output=$(/bin/bash "$ROOT/afterraw.sh" --open-psd --make-psd "專案" 2>&1); then
+        fail "--open-psd 搭配 --make-psd 應該失敗"
+    fi
+    [[ "$output" = *"--open-psd 是獨立開啟模式"* ]] || fail "未回報 --open-psd 與 --make-psd 衝突：$output"
 }
 
 test_multi_select() {

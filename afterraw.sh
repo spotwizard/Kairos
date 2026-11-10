@@ -11,6 +11,7 @@ DO_REDO=false
 DO_PRE=false
 DO_LOAD_RAW=false
 DO_OPEN_PSD=false
+DO_MAKE_PSD=false
 DO_IG=false
 DO_FB=false
 DATE_PREFIX=""
@@ -25,6 +26,7 @@ while [ "$#" -gt 0 ]; do
         --pre|--pre-only) DO_PRE=true ;;
         --load-raw|--open-raw|--raw-only) DO_LOAD_RAW=true ;;
         --open-psd|--psd) DO_OPEN_PSD=true ;;
+        --make-psd) DO_MAKE_PSD=true ;;
         --ig) DO_IG=true ;;
         --fb) DO_FB=true ;;
         --date)
@@ -63,16 +65,34 @@ if [ "$DATE_SPECIFIED" = true ] && ! [[ "$DATE_PREFIX" =~ ^[0-9]{8}$ ]]; then
     exit 1
 fi
 
+# 後置輸出模式如果沒有指定 --make-psd、--ig 或 --fb，則根據 RAW 重新產生 PSD、IG、FB；
+# 只指定 --ig／--fb 時，根據 PSD 目錄內現有的 PSD 重新產生 JPG，不重建 PSD
+if [ "$DO_PRE" = false ] && [ "$DO_LOAD_RAW" = false ] && [ "$DO_OPEN_PSD" = false ] \
+    && [ "$DO_MAKE_PSD" = false ] && [ "$DO_IG" = false ] && [ "$DO_FB" = false ]; then
+    DO_MAKE_PSD=true
+    DO_IG=true
+    DO_FB=true
+fi
+
+OUTPUT_FROM_PSD=false
+if [ "$DO_MAKE_PSD" = false ] && { [ "$DO_IG" = true ] || [ "$DO_FB" = true ]; }; then
+    OUTPUT_FROM_PSD=true
+fi
+
 if [ "$FILE_SPECIFIED" = true ]; then
     for raw_file_name in "${RAW_FILE_NAMES[@]}"; do
         if [ -z "$raw_file_name" ] || [[ "$raw_file_name" = */* ]]; then
             echo "錯誤：--file 必須是檔名，不能包含路徑"
             exit 1
         fi
-        # 開啟 PSD 模式的 --file 是 PSD 目錄內的檔名，其他模式是 RAW 目錄內的檔名
-        if [ "$DO_OPEN_PSD" = true ]; then
+        # 開啟 PSD 與根據 PSD 輸出 JPG 的 --file 是 PSD 目錄內的檔名，其他模式是 RAW 目錄內的檔名
+        if [ "$DO_OPEN_PSD" = true ] || [ "$OUTPUT_FROM_PSD" = true ]; then
             if ! [[ "$raw_file_name" =~ \.[Pp][Ss][Dd]$ ]]; then
-                echo "錯誤：--open-psd 的 --file 必須是 PSD 目錄內的 .psd 檔名"
+                if [ "$DO_OPEN_PSD" = true ]; then
+                    echo "錯誤：--open-psd 的 --file 必須是 PSD 目錄內的 .psd 檔名"
+                else
+                    echo "錯誤：根據 PSD 輸出 IG／FB 時，--file 必須是 PSD 目錄內的 .psd 檔名"
+                fi
                 exit 1
             fi
         elif ! [[ "$raw_file_name" =~ \.([Aa][Rr][Ww]|[Rr][Aa][Ww])$ ]]; then
@@ -86,30 +106,24 @@ if [ "$FILE_SPECIFIED" = true ]; then
     fi
 fi
 
-if [ "$DO_REDO" = true ] && { [ "$DO_LOAD_RAW" = true ] || [ "$DO_OPEN_PSD" = true ] || [ "$DO_IG" = true ] || [ "$DO_FB" = true ] || [ "$DATE_SPECIFIED" = true ]; }; then
-    echo "錯誤：--redo 是獨立重新修圖模式，不能與 --load-raw、--open-psd、--ig、--fb 或 --date 同時使用"
+if [ "$DO_REDO" = true ] && { [ "$DO_LOAD_RAW" = true ] || [ "$DO_OPEN_PSD" = true ] || [ "$DO_MAKE_PSD" = true ] || [ "$DO_IG" = true ] || [ "$DO_FB" = true ] || [ "$DATE_SPECIFIED" = true ]; }; then
+    echo "錯誤：--redo 是獨立重新修圖模式，不能與 --load-raw、--open-psd、--make-psd、--ig、--fb 或 --date 同時使用"
     exit 1
 fi
 
-if [ "$DO_LOAD_RAW" = true ] && { [ "$DO_PRE" = true ] || [ "$DO_OPEN_PSD" = true ] || [ "$DO_IG" = true ] || [ "$DO_FB" = true ]; }; then
-    echo "錯誤：--load-raw 是獨立載入模式，不能與 --pre、--open-psd、--ig 或 --fb 同時使用"
+if [ "$DO_LOAD_RAW" = true ] && { [ "$DO_PRE" = true ] || [ "$DO_OPEN_PSD" = true ] || [ "$DO_MAKE_PSD" = true ] || [ "$DO_IG" = true ] || [ "$DO_FB" = true ]; }; then
+    echo "錯誤：--load-raw 是獨立載入模式，不能與 --pre、--open-psd、--make-psd、--ig 或 --fb 同時使用"
     exit 1
 fi
 
-if [ "$DO_OPEN_PSD" = true ] && { [ "$DO_PRE" = true ] || [ "$DO_IG" = true ] || [ "$DO_FB" = true ]; }; then
-    echo "錯誤：--open-psd 是獨立開啟模式，不能與 --pre、--ig 或 --fb 同時使用"
+if [ "$DO_OPEN_PSD" = true ] && { [ "$DO_PRE" = true ] || [ "$DO_MAKE_PSD" = true ] || [ "$DO_IG" = true ] || [ "$DO_FB" = true ]; }; then
+    echo "錯誤：--open-psd 是獨立開啟模式，不能與 --pre、--make-psd、--ig 或 --fb 同時使用"
     exit 1
 fi
 
-if [ "$DO_PRE" = true ] && { [ "$DO_IG" = true ] || [ "$DO_FB" = true ]; }; then
-    echo "錯誤：--pre 是獨立前置模式，不能與 --ig 或 --fb 同時使用"
+if [ "$DO_PRE" = true ] && { [ "$DO_MAKE_PSD" = true ] || [ "$DO_IG" = true ] || [ "$DO_FB" = true ]; }; then
+    echo "錯誤：--pre 是獨立前置模式，不能與 --make-psd、--ig 或 --fb 同時使用"
     exit 1
-fi
-
-# 後置輸出模式如果沒有指定 --ig 或 --fb，則兩者都做
-if [ "$DO_PRE" = false ] && [ "$DO_LOAD_RAW" = false ] && [ "$DO_OPEN_PSD" = false ] && [ "$DO_IG" = false ] && [ "$DO_FB" = false ]; then
-    DO_IG=true
-    DO_FB=true
 fi
 
 # 檢查是否提供了資料夾名稱
@@ -120,7 +134,9 @@ if [ -z "$FOLDER_NAME" ]; then
     echo "  前置作業: $0 --pre [--date YYYYMMDD | --file RAW檔名] <資料夾名稱>"
     echo "  載入 RAW: $0 --load-raw [--date YYYYMMDD | --file RAW檔名] <資料夾名稱|RAW目錄路徑>"
     echo "  開啟 PSD 檔案: $0 --open-psd [--file PSD檔名] <資料夾名稱>"
-    echo "  後置輸出: $0 [--ig] [--fb] [--date YYYYMMDD | --file RAW檔名] <資料夾名稱>"
+    echo "  輸出 PSD＋IG＋FB: $0 [--date YYYYMMDD | --file RAW檔名] <資料夾名稱>"
+    echo "  輸出 PSD: $0 --make-psd [--date YYYYMMDD | --file RAW檔名] <資料夾名稱>"
+    echo "  根據 PSD 輸出 IG／FB: $0 [--ig] [--fb] [--date YYYYMMDD | --file PSD檔名] <資料夾名稱>"
     exit 1
 fi
 
@@ -146,8 +162,14 @@ fi
 
 echo "找到資料夾：$TARGET_DIR"
 
+# 開啟 PSD 與根據 PSD 輸出 IG／FB 只讀 PSD 目錄，不需要 RAW 目錄
+SOURCE_IS_PSD=false
+if [ "$DO_OPEN_PSD" = true ] || [ "$OUTPUT_FROM_PSD" = true ]; then
+    SOURCE_IS_PSD=true
+fi
+
 # 檢查 RAW 來源資料夾是否存在
-if [ "$DO_OPEN_PSD" = true ]; then
+if [ "$SOURCE_IS_PSD" = true ]; then
     RAW_DIR=""
 elif [ "$DO_LOAD_RAW" = true ] && [ ! -d "$TARGET_DIR/RAW" ]; then
     RAW_DIR="$TARGET_DIR"
@@ -155,7 +177,7 @@ else
     RAW_DIR="$TARGET_DIR/RAW"
 fi
 
-if [ "$DO_OPEN_PSD" = false ] && [ ! -d "$RAW_DIR" ]; then
+if [ "$SOURCE_IS_PSD" = false ] && [ ! -d "$RAW_DIR" ]; then
     if [ "$DO_LOAD_RAW" = true ]; then
         echo "錯誤：找不到 RAW 來源資料夾"
     else
@@ -165,7 +187,7 @@ if [ "$DO_OPEN_PSD" = false ] && [ ! -d "$RAW_DIR" ]; then
     exit 1
 fi
 
-if [ "$DO_OPEN_PSD" = false ] && [ "$FILE_SPECIFIED" = true ]; then
+if [ "$SOURCE_IS_PSD" = false ] && [ "$FILE_SPECIFIED" = true ]; then
     for raw_file_name in "${RAW_FILE_NAMES[@]}"; do
         if [ ! -f "$RAW_DIR/$raw_file_name" ]; then
             echo "錯誤：找不到指定的 RAW 檔案"
@@ -175,7 +197,7 @@ if [ "$DO_OPEN_PSD" = false ] && [ "$FILE_SPECIFIED" = true ]; then
     done
 fi
 
-if [ "$DO_OPEN_PSD" = true ]; then
+if [ "$SOURCE_IS_PSD" = true ]; then
     :
 elif [ "$DO_LOAD_RAW" = true ] && [ "$RAW_DIR" = "$TARGET_DIR" ]; then
     echo "使用指定資料夾作為 RAW 來源：$RAW_DIR"
@@ -393,16 +415,20 @@ raw_has_completed_sidecars() {
     [ -f "${base_name}.xmp" ] && [ -f "${base_name}.acr" ]
 }
 
-raw_output_basename_exists() {
-    local output_base="$1"
-    local raw_file
-    local raw_name
-    local raw_base
+# 後置輸出的來源檔：根據 RAW 輸出時是找到的 RAW，根據 PSD 輸出時是找到的 PSD
+OUTPUT_SOURCE_FILES=()
+OUTPUT_SOURCE_LABEL="RAW"
 
-    for raw_file in "${RAW_FILES_FOUND[@]}"; do
-        raw_name=$(basename "$raw_file")
-        raw_base="${raw_name%.*}"
-        if [ "$raw_base" = "$output_base" ]; then
+source_output_basename_exists() {
+    local output_base="$1"
+    local source_file
+    local source_name
+    local source_base
+
+    for source_file in "${OUTPUT_SOURCE_FILES[@]}"; do
+        source_name=$(basename "$source_file")
+        source_base="${source_name%.*}"
+        if [ "$source_base" = "$output_base" ]; then
             return 0
         fi
     done
@@ -429,22 +455,22 @@ cleanup_orphan_output_files() {
         return 0
     fi
 
-    echo "檢查 ${label} 無對應 RAW 的輸出檔..."
+    echo "檢查 ${label} 無對應 ${OUTPUT_SOURCE_LABEL} 的輸出檔..."
 
     if [ "$file_type" = "psd" ]; then
         while IFS= read -r -d '' output_file; do
             output_name=$(basename "$output_file")
             output_base="${output_name%.*}"
 
-            if raw_output_basename_exists "$output_base"; then
+            if source_output_basename_exists "$output_base"; then
                 continue
             fi
 
             if rm -f -- "$output_file"; then
-                echo "✓ 已刪除無對應 RAW 的 ${label} 檔案：$output_name"
+                echo "✓ 已刪除無對應 ${OUTPUT_SOURCE_LABEL} 的 ${label} 檔案：$output_name"
                 deleted_count=$((deleted_count + 1))
             else
-                echo "✗ 無對應 RAW 但刪除失敗：$output_name"
+                echo "✗ 無對應 ${OUTPUT_SOURCE_LABEL} 但刪除失敗：$output_name"
                 failed_count=$((failed_count + 1))
             fi
         done < <(find "$output_dir" -maxdepth 1 -type f "${date_filter[@]}" -iname "*.psd" -print0)
@@ -453,15 +479,15 @@ cleanup_orphan_output_files() {
             output_name=$(basename "$output_file")
             output_base="${output_name%.*}"
 
-            if raw_output_basename_exists "$output_base"; then
+            if source_output_basename_exists "$output_base"; then
                 continue
             fi
 
             if rm -f -- "$output_file"; then
-                echo "✓ 已刪除無對應 RAW 的 ${label} 檔案：$output_name"
+                echo "✓ 已刪除無對應 ${OUTPUT_SOURCE_LABEL} 的 ${label} 檔案：$output_name"
                 deleted_count=$((deleted_count + 1))
             else
-                echo "✗ 無對應 RAW 但刪除失敗：$output_name"
+                echo "✗ 無對應 ${OUTPUT_SOURCE_LABEL} 但刪除失敗：$output_name"
                 failed_count=$((failed_count + 1))
             fi
         done < <(find "$output_dir" -maxdepth 1 -type f "${date_filter[@]}" \( -iname "*.jpg" -o -iname "*.jpeg" \) -print0)
@@ -476,6 +502,334 @@ cleanup_orphan_output_files() {
     fi
 
     return 0
+}
+
+# 收集 PSD 目錄內要處理的 PSD：指定檔名時只取這些檔案（找不到的略過），否則取全部（或指定日期開頭）的 .psd
+collect_psd_files() {
+    local psd_file_name
+    local psd_file
+
+    PSD_DIR="$TARGET_DIR/PSD"
+    PSD_FILES_FOUND=()
+
+    if [ ! -d "$PSD_DIR" ]; then
+        echo "錯誤：找不到 PSD 資料夾"
+        echo "路徑：$PSD_DIR"
+        return 1
+    fi
+
+    if [ "$FILE_SPECIFIED" = true ]; then
+        for psd_file_name in "${RAW_FILE_NAMES[@]}"; do
+            if [ ! -f "$PSD_DIR/$psd_file_name" ]; then
+                echo "⊘ 找不到 PSD 檔案，略過：$psd_file_name"
+                continue
+            fi
+            PSD_FILES_FOUND+=("$PSD_DIR/$psd_file_name")
+            echo "找到 PSD 檔案：$psd_file_name"
+        done
+    else
+        while IFS= read -r -d '' psd_file; do
+            PSD_FILES_FOUND+=("$psd_file")
+            echo "找到 PSD 檔案：$(basename "$psd_file")"
+        done < <(find "$PSD_DIR" -maxdepth 1 -type f -iname "${DATE_PREFIX}*.psd" -print0)
+    fi
+
+    if [ ${#PSD_FILES_FOUND[@]} -eq 0 ] && [ "$FILE_SPECIFIED" = true ]; then
+        echo "錯誤：找不到指定的 PSD 檔案"
+        return 1
+    fi
+
+    return 0
+}
+
+prepare_output_dirs() {
+    PSD_DIR="$TARGET_DIR/PSD"
+    FB_DIR="$TARGET_DIR/FB"
+    IG_DIR="$TARGET_DIR/IG"
+
+    if [ "$DO_MAKE_PSD" = true ]; then
+        if [ ! -d "$PSD_DIR" ]; then
+            echo "建立 PSD 資料夾：$PSD_DIR"
+            mkdir -p "$PSD_DIR" || return 1
+        else
+            echo "PSD 資料夾已存在：$PSD_DIR"
+        fi
+    fi
+
+    if [ "$DO_FB" = true ]; then
+        mkdir -p "$FB_DIR" || return 1
+        echo "FB 輸出資料夾：$FB_DIR"
+    fi
+    if [ "$DO_IG" = true ]; then
+        mkdir -p "$IG_DIR" || return 1
+        echo "IG 輸出資料夾：$IG_DIR"
+    fi
+
+    return 0
+}
+
+# 指定檔名時，其他檔案的輸出檔不在處理範圍內，不做孤兒輸出清理
+cleanup_orphan_outputs() {
+    local cleanup_failed=false
+
+    if [ "$FILE_SPECIFIED" = true ]; then
+        return 0
+    fi
+
+    echo ""
+    echo "開始清理無對應 ${OUTPUT_SOURCE_LABEL} 的輸出檔..."
+    if [ "$DO_MAKE_PSD" = true ] && ! cleanup_orphan_output_files "$PSD_DIR" "PSD" "psd"; then
+        cleanup_failed=true
+    fi
+    if [ "$DO_FB" = true ] && ! cleanup_orphan_output_files "$FB_DIR" "FB" "jpg"; then
+        cleanup_failed=true
+    fi
+    if [ "$DO_IG" = true ] && ! cleanup_orphan_output_files "$IG_DIR" "IG" "jpg"; then
+        cleanup_failed=true
+    fi
+    if [ "$cleanup_failed" = true ]; then
+        echo "✗ 無對應 ${OUTPUT_SOURCE_LABEL} 的輸出檔清理失敗"
+        return 1
+    fi
+
+    return 0
+}
+
+# 把路徑放進 JavaScript 單引號字串前，跳脫反斜線與單引號
+js_quote() {
+    local value="$1"
+
+    value="${value//\\/\\\\}"
+    value="${value//\'/\\\'}"
+    printf "'%s'" "$value"
+}
+
+# 產生單一檔案的 Photoshop JavaScript。
+# 有 RAW 時：以底版 PSD 放入 RAW、轉成智慧型物件並加上曝光度調整、在智慧型物件內縮成寬 4000px、置中後存回 PSD。
+# 沒有 RAW 時：開啟現有 PSD，不修改也不存回。
+# 之後依 DO_FB、DO_IG 從 PSD 輸出：FB 是智慧型物件內容，IG 是整張畫布。
+build_output_js() {
+    local psd_file="$1"
+    local raw_file="$2"
+    local fb_output="$3"
+    local ig_output="$4"
+    local js
+
+    js="
+var psdFile = $(js_quote "$psd_file");
+var fbOutput = $(js_quote "$fb_output");
+var igOutput = $(js_quote "$ig_output");
+var idplacedLayerEditContents = stringIDToTypeID('placedLayerEditContents');
+
+// JPG 儲存選項
+var jpgOptions = new JPEGSaveOptions();
+jpgOptions.quality = 7;
+jpgOptions.embedColorProfile = true;
+jpgOptions.formatOptions = FormatOptions.STANDARDBASELINE;
+
+function saveJpgOverwrite(documentToSave, outputPath) {
+    var jpgFile = new File(outputPath);
+    if (jpgFile.exists) {
+        jpgFile.remove();
+    }
+    documentToSave.saveAs(jpgFile, jpgOptions, true, Extension.LOWERCASE);
+}
+
+// 由上往下找第一個智慧型物件圖層（放入的 RAW）
+function findSmartObjectLayer(documentToSearch) {
+    for (var i = 0; i < documentToSearch.layers.length; i++) {
+        var layer = documentToSearch.layers[i];
+        if (layer.typename == 'ArtLayer' && layer.kind == LayerKind.SMARTOBJECT) {
+            return layer;
+        }
+    }
+    return null;
+}
+
+var doc = app.open(new File(psdFile));
+var smartLayer = null;
+"
+
+    if [ -n "$raw_file" ]; then
+        js+="
+var rawFile = $(js_quote "$raw_file");
+
+// 匯入 RAW 檔案作為新圖層
+var idPlc = charIDToTypeID('Plc ');
+var desc = new ActionDescriptor();
+desc.putPath(charIDToTypeID('null'), new File(rawFile));
+desc.putEnumerated(charIDToTypeID('FTps'), charIDToTypeID('QCSt'), charIDToTypeID('Qcsa'));
+executeAction(idPlc, desc, DialogModes.NO);
+
+// 移動圖層到最上層
+if (doc.layers.length > 1) {
+    doc.activeLayer.move(doc.layers[0], ElementPlacement.PLACEBEFORE);
+}
+
+// 轉換為智慧型物件
+executeAction(stringIDToTypeID('newPlacedLayer'), undefined, DialogModes.NO);
+
+// 第一次編輯智慧型物件：建立曝光度圖層
+executeAction(idplacedLayerEditContents, undefined, DialogModes.NO);
+var exposureDoc = app.activeDocument;
+var mkDesc = new ActionDescriptor();
+var adjRef = new ActionReference();
+adjRef.putClass(charIDToTypeID('AdjL'));
+mkDesc.putReference(charIDToTypeID('null'), adjRef);
+var descType = new ActionDescriptor();
+var descExposure = new ActionDescriptor();
+descExposure.putDouble(stringIDToTypeID('offset'), 0.0042); // 偏移量
+descExposure.putDouble(stringIDToTypeID('gammaCorrection'), 1.15); // Gamma 校正
+descType.putObject(charIDToTypeID('Type'), stringIDToTypeID('exposure'), descExposure);
+mkDesc.putObject(charIDToTypeID('Usng'), charIDToTypeID('AdjL'), descType);
+executeAction(charIDToTypeID('Mk  '), mkDesc, DialogModes.NO);
+exposureDoc.save();
+exposureDoc.close();
+app.activeDocument = doc;
+
+// 第二次編輯智慧型物件：調整影像尺寸為寬度 4000px
+executeAction(idplacedLayerEditContents, undefined, DialogModes.NO);
+var resizeDoc = app.activeDocument;
+var currentWidth = resizeDoc.width.as('px');
+var targetWidth = 4000;
+var newHeight = resizeDoc.height.as('px') * (targetWidth / currentWidth);
+resizeDoc.resizeImage(UnitValue(targetWidth, 'px'), UnitValue(newHeight, 'px'), null, ResampleMethod.BICUBIC);
+resizeDoc.save();
+resizeDoc.close();
+app.activeDocument = doc;
+
+// 將智慧型物件置中對齊（在 4160px 寬的畫布上，4000px 智慧型物件會有左右各 80px 留白）
+smartLayer = doc.activeLayer;
+var bounds = smartLayer.bounds;
+var layerCenterX = (bounds[0].as('px') + bounds[2].as('px')) / 2;
+var layerCenterY = (bounds[1].as('px') + bounds[3].as('px')) / 2;
+smartLayer.translate(doc.width.as('px') / 2 - layerCenterX, doc.height.as('px') / 2 - layerCenterY);
+
+// 儲存 PSD
+doc.save();
+"
+    fi
+
+    if [ "$DO_FB" = true ]; then
+        js+="
+// FB：開啟智慧型物件內容，轉換為 sRGB 後導出 JPG，不存回
+if (smartLayer == null) {
+    smartLayer = findSmartObjectLayer(doc);
+}
+if (smartLayer == null) {
+    doc.close(SaveOptions.DONOTSAVECHANGES);
+    throw new Error('PSD 內找不到智慧型物件圖層，無法輸出 FB');
+}
+doc.activeLayer = smartLayer;
+executeAction(idplacedLayerEditContents, undefined, DialogModes.NO);
+var fbDoc = app.activeDocument;
+fbDoc.convertProfile('sRGB IEC61966-2.1', Intent.RELATIVECOLORIMETRIC, true, false);
+saveJpgOverwrite(fbDoc, fbOutput);
+fbDoc.close(SaveOptions.DONOTSAVECHANGES);
+app.activeDocument = doc;
+"
+    fi
+
+    if [ "$DO_IG" = true ]; then
+        js+="
+// IG：整張畫布轉換為 sRGB 後導出 JPG，不存回
+app.activeDocument = doc;
+doc.convertProfile('sRGB IEC61966-2.1', Intent.RELATIVECOLORIMETRIC, true, false);
+saveJpgOverwrite(doc, igOutput);
+"
+    fi
+
+    js+="
+doc.close(SaveOptions.DONOTSAVECHANGES);
+"
+
+    printf '%s' "$js"
+}
+
+# 依 JOB_PSD_FILES（與對應的 JOB_RAW_FILES，根據 PSD 輸出時為空字串）逐一交給 Photoshop 處理
+run_photoshop_outputs() {
+    local i
+    local psd_file
+    local raw_file
+    local file_basename
+    local fb_output
+    local ig_output
+    local js_code
+    local modes=""
+    local failed_count=0
+    local -a exif_files
+
+    if [ "$DO_MAKE_PSD" = true ]; then modes+="PSD "; fi
+    if [ "$DO_IG" = true ]; then modes+="IG "; fi
+    if [ "$DO_FB" = true ]; then modes+="FB "; fi
+
+    echo ""
+    if [ "$DO_MAKE_PSD" = true ]; then
+        echo "開始將 RAW/ARW 檔案匯入到 PSD，並輸出：${modes}"
+    else
+        echo "開始根據 PSD 輸出：${modes}"
+    fi
+    echo ""
+
+    for i in "${!JOB_PSD_FILES[@]}"; do
+        psd_file="${JOB_PSD_FILES[$i]}"
+        raw_file="${JOB_RAW_FILES[$i]}"
+        file_basename=$(basename "$psd_file")
+        file_basename="${file_basename%.*}"
+        fb_output="$FB_DIR/${file_basename}.jpg"
+        ig_output="$IG_DIR/${file_basename}.jpg"
+
+        if [ -n "$raw_file" ]; then
+            echo "處理：$(basename "$psd_file") ← $(basename "$raw_file")"
+        else
+            echo "處理：$(basename "$psd_file")"
+        fi
+
+        js_code=$(build_output_js "$psd_file" "$raw_file" "$fb_output" "$ig_output")
+
+        # 使用 osascript 執行 Photoshop JavaScript
+        if osascript - "$PHOTOSHOP_APP_PATH" "$js_code" <<'APPLESCRIPT' > /dev/null; then
+on run argv
+    set appPath to item 1 of argv as text
+    set jsCode to item 2 of argv
+
+    tell application appPath
+        with timeout of 1800 seconds
+            «event miscDjxM» jsCode
+        end timeout
+    end tell
+end run
+APPLESCRIPT
+            echo "  ✓ 完成"
+            # 更新 JPG 的 EXIF 時間為當下時間
+            exif_files=()
+            if [ "$DO_FB" = true ]; then exif_files+=("$fb_output"); fi
+            if [ "$DO_IG" = true ]; then exif_files+=("$ig_output"); fi
+            if [ ${#exif_files[@]} -gt 0 ]; then
+                exiftool -overwrite_original -AllDates="now" "${exif_files[@]}" > /dev/null 2>&1
+                echo "  ✓ EXIF 時間已更新"
+            fi
+        else
+            echo "  ✗ 處理失敗"
+            failed_count=$((failed_count + 1))
+        fi
+    done
+
+    echo ""
+    echo "所有檔案已處理完成（模式：${modes}）"
+    if [ "$failed_count" -gt 0 ]; then
+        echo "其中 ${failed_count} 個檔案處理失敗"
+    fi
+
+    # 關閉 Photoshop
+    echo "正在關閉 Photoshop..."
+    osascript - "$PHOTOSHOP_APP_PATH" <<'APPLESCRIPT' > /dev/null 2>&1
+on run argv
+    set appPath to item 1 of argv as text
+    tell application appPath to quit
+end run
+APPLESCRIPT
+    echo "✓ Photoshop 已關閉"
 }
 
 apply_camera_raw_preflight() {
@@ -1462,36 +1816,9 @@ RAW_FILES_FOUND=()
 FILES_TO_OPEN=()
 
 if [ "$DO_OPEN_PSD" = true ]; then
-    PSD_DIR="$TARGET_DIR/PSD"
-    PSD_FILES_FOUND=()
-
-    if [ ! -d "$PSD_DIR" ]; then
-        echo "錯誤：找不到 PSD 資料夾"
-        echo "路徑：$PSD_DIR"
-        exit 1
-    fi
-
-    if [ "$FILE_SPECIFIED" = true ]; then
-        for psd_file_name in "${RAW_FILE_NAMES[@]}"; do
-            if [ ! -f "$PSD_DIR/$psd_file_name" ]; then
-                echo "⊘ 找不到 PSD 檔案，略過：$psd_file_name"
-                continue
-            fi
-            PSD_FILES_FOUND+=("$PSD_DIR/$psd_file_name")
-            echo "找到 PSD 檔案：$psd_file_name"
-        done
-    else
-        while IFS= read -r -d '' psd_file; do
-            PSD_FILES_FOUND+=("$psd_file")
-            echo "找到 PSD 檔案：$(basename "$psd_file")"
-        done < <(find "$PSD_DIR" -maxdepth 1 -type f -iname "*.psd" -print0)
-    fi
+    collect_psd_files || exit 1
 
     if [ ${#PSD_FILES_FOUND[@]} -eq 0 ]; then
-        if [ "$FILE_SPECIFIED" = true ]; then
-            echo "錯誤：找不到指定的 PSD 檔案"
-            exit 1
-        fi
         echo "沒有找到 .psd 檔案"
         exit 0
     fi
@@ -1509,6 +1836,43 @@ if [ "$DO_OPEN_PSD" = true ]; then
     fi
 
     echo "✓ 已送出 PSD 開啟指令"
+    exit 0
+fi
+
+# 根據 PSD 目錄內現有的 PSD 重新產生 IG、FB，不讀 RAW、不重建 PSD
+if [ "$OUTPUT_FROM_PSD" = true ]; then
+    collect_psd_files || exit 1
+
+    if [ ${#PSD_FILES_FOUND[@]} -eq 0 ]; then
+        if [ -n "$DATE_PREFIX" ]; then
+            echo "沒有找到檔名以 ${DATE_PREFIX} 開頭的 .psd 檔案"
+        else
+            echo "沒有找到 .psd 檔案"
+        fi
+        exit 0
+    fi
+
+    echo ""
+    echo "共找到 ${#PSD_FILES_FOUND[@]} 個 PSD 檔案"
+
+    echo ""
+    if ! make_available_offline "${PSD_FILES_FOUND[@]}"; then
+        exit 1
+    fi
+
+    OUTPUT_SOURCE_FILES=("${PSD_FILES_FOUND[@]}")
+    OUTPUT_SOURCE_LABEL="PSD"
+    JOB_PSD_FILES=("${PSD_FILES_FOUND[@]}")
+    JOB_RAW_FILES=()
+    for psd_file in "${PSD_FILES_FOUND[@]}"; do
+        JOB_RAW_FILES+=("")
+    done
+
+    echo ""
+    prepare_output_dirs || exit 1
+    cleanup_orphan_outputs || exit 1
+    run_photoshop_outputs
+    echo "完成！"
     exit 0
 fi
 
@@ -1715,78 +2079,38 @@ if ! make_available_offline "$TEMPLATE_FILE"; then
     exit 1
 fi
 
-# 定義輸出目標資料夾
-PSD_DIR="$TARGET_DIR/PSD"
-FB_DIR="$TARGET_DIR/FB"
-IG_DIR="$TARGET_DIR/IG"
+OUTPUT_SOURCE_FILES=("${RAW_FILES_FOUND[@]}")
+OUTPUT_SOURCE_LABEL="RAW"
 
-# 如果 PSD 資料夾不存在，則建立它
-if [ ! -d "$PSD_DIR" ]; then
-    echo "建立 PSD 資料夾：$PSD_DIR"
-    mkdir -p "$PSD_DIR"
-else
-    echo "PSD 資料夾已存在：$PSD_DIR"
-fi
-
-if [ "$DO_FB" = true ]; then
-    mkdir -p "$FB_DIR"
-    echo "FB 輸出資料夾：$FB_DIR"
-fi
-if [ "$DO_IG" = true ]; then
-    mkdir -p "$IG_DIR"
-    echo "IG 輸出資料夾：$IG_DIR"
-fi
-
-# 指定 RAW 時，其他 RAW 的輸出檔不在處理範圍內，不做孤兒輸出清理
-if [ "$FILE_SPECIFIED" = false ]; then
-    echo ""
-    echo "開始清理無對應 RAW 的輸出檔..."
-    cleanup_failed=false
-    if ! cleanup_orphan_output_files "$PSD_DIR" "PSD" "psd"; then
-        cleanup_failed=true
-    fi
-    if [ "$DO_FB" = true ] && ! cleanup_orphan_output_files "$FB_DIR" "FB" "jpg"; then
-        cleanup_failed=true
-    fi
-    if [ "$DO_IG" = true ] && ! cleanup_orphan_output_files "$IG_DIR" "IG" "jpg"; then
-        cleanup_failed=true
-    fi
-    if [ "$cleanup_failed" = true ]; then
-        echo "✗ 無對應 RAW 的輸出檔清理失敗"
-        exit 1
-    fi
-fi
+prepare_output_dirs || exit 1
+cleanup_orphan_outputs || exit 1
 
 echo ""
 echo "開始準備 PSD 中介檔..."
 
 # 儲存 RAW 檔案和對應的 PSD 檔案配對
-declare -a PSD_FILES
-declare -a RAW_FILES
+JOB_PSD_FILES=()
+JOB_RAW_FILES=()
 
-# 對每個找到的檔案,複製模板並重新命名
+# 對每個找到的檔案，複製模板並重新命名
 for file in "${FILES_TO_OPEN[@]}"; do
-    # 取得檔案名稱(不含副檔名)
     base_name=$(basename "$file")
     file_name="${base_name%.*}"
-    
-    # 定義新的 PSD 檔案路徑
     new_psd_file="$PSD_DIR/${file_name}.psd"
-    
+
     psd_already_exists=false
     if [ -f "$new_psd_file" ]; then
         psd_already_exists=true
     fi
-    
-    # 複製模板檔案
+
     if cp -f "$TEMPLATE_FILE" "$new_psd_file"; then
         if [ "$psd_already_exists" = true ]; then
             echo "✓ 已存在，已覆蓋：${file_name}.psd"
         else
             echo "✓ 已複製：${file_name}.psd"
         fi
-        PSD_FILES+=("$new_psd_file")
-        RAW_FILES+=("$file")
+        JOB_PSD_FILES+=("$new_psd_file")
+        JOB_RAW_FILES+=("$file")
     else
         if [ "$psd_already_exists" = true ]; then
             echo "✗ 已存在但覆蓋失敗：${file_name}.psd"
@@ -1797,222 +2121,10 @@ for file in "${FILES_TO_OPEN[@]}"; do
 done
 
 echo ""
-echo "共準備了 ${#PSD_FILES[@]} 個 PSD 檔案"
+echo "共準備了 ${#JOB_PSD_FILES[@]} 個 PSD 檔案"
 
-# 如果有成功複製的檔案,則處理匯入 RAW 圖層
-if [ ${#PSD_FILES[@]} -gt 0 ]; then
-    echo ""
-    echo "開始將 RAW/ARW 檔案匯入到 PSD 作為最上層圖層..."
-    echo ""
-    
-    # 對每個 PSD 檔案執行自動化
-    for i in "${!PSD_FILES[@]}"; do
-        psd_file="${PSD_FILES[$i]}"
-        raw_file="${RAW_FILES[$i]}"
-        file_basename=$(basename "$psd_file" .psd)
-        
-        fb_output="$FB_DIR/${file_basename}.jpg"
-        ig_output="$IG_DIR/${file_basename}.jpg"
-        
-        echo "處理：$(basename "$psd_file") ← $(basename "$raw_file")"
-        
-        # 根據參數動態組合 Photoshop JavaScript
-        JS_CODE="
-                    var psdFile = '$psd_file';
-                    var rawFile = '$raw_file';
-                    var fbOutput = '$fb_output';
-                    var igOutput = '$ig_output';
-                    
-                    // 開啟 PSD 檔案
-                    var doc = app.open(new File(psdFile));
-                    
-                    // 匯入 RAW 檔案作為新圖層
-                    var idPlc = charIDToTypeID('Plc ');
-                    var desc = new ActionDescriptor();
-                    var idnull = charIDToTypeID('null');
-                    desc.putPath(idnull, new File(rawFile));
-                    var idFTps = charIDToTypeID('FTps');
-                    var idQCSt = charIDToTypeID('QCSt');
-                    var idQcsa = charIDToTypeID('Qcsa');
-                    desc.putEnumerated(idFTps, idQCSt, idQcsa);
-                    executeAction(idPlc, desc, DialogModes.NO);
-                    
-                    // 移動圖層到最上層
-                    if (doc.layers.length > 1) {
-                        doc.activeLayer.move(doc.layers[0], ElementPlacement.PLACEBEFORE);
-                    }
-                    
-                    // 轉換為智慧型物件
-                    var idnewPlacedLayer = stringIDToTypeID('newPlacedLayer');
-                    executeAction(idnewPlacedLayer, undefined, DialogModes.NO);
-                    
-                    // 第一次編輯智慧型物件：建立曝光度圖層
-                    var idplacedLayerEditContents = stringIDToTypeID('placedLayerEditContents');
-                    executeAction(idplacedLayerEditContents, undefined, DialogModes.NO);
-                    
-                    // 現在在智慧型物件內部
-                    var smartDoc = app.activeDocument;
-                    
-                    // 建立曝光度調整圖層
-                    var idMk = charIDToTypeID('Mk  ');
-                    var desc = new ActionDescriptor();
-                    var ref = new ActionReference();
-                    ref.putClass(charIDToTypeID('AdjL'));
-                    desc.putReference(charIDToTypeID('null'), ref);
-                    var descType = new ActionDescriptor();
-                    var descExposure = new ActionDescriptor();
-                    descExposure.putDouble(stringIDToTypeID('offset'), 0.0042); // 偏移量
-                    descExposure.putDouble(stringIDToTypeID('gammaCorrection'), 1.15); // Gamma 校正
-                    descType.putObject(charIDToTypeID('Type'), stringIDToTypeID('exposure'), descExposure);
-                    desc.putObject(charIDToTypeID('Usng'), charIDToTypeID('AdjL'), descType);
-                    executeAction(idMk, desc, DialogModes.NO);
-                    
-                    // 儲存並關閉智慧型物件
-                    smartDoc.save();
-                    smartDoc.close();
-                    
-                    // 返回主文件
-                    app.activeDocument = doc;
-                    
-                    // JPG 儲存選項
-                    var jpgOptions = new JPEGSaveOptions();
-                    jpgOptions.quality = 7;
-                    jpgOptions.embedColorProfile = true;
-                    jpgOptions.formatOptions = FormatOptions.STANDARDBASELINE;
-
-                    function saveJpgOverwrite(documentToSave, outputPath) {
-                        var jpgFile = new File(outputPath);
-                        if (jpgFile.exists) {
-                            jpgFile.remove();
-                        }
-                        documentToSave.saveAs(jpgFile, jpgOptions, true, Extension.LOWERCASE);
-                    }
-        "
-        
-        # FB 部分：編輯智慧型物件調整尺寸並導出 FB JPG
-        if [ "$DO_FB" = true ]; then
-            JS_CODE+="
-                    // 第二次編輯智慧型物件：調整影像尺寸並導出 FB JPG
-                    executeAction(idplacedLayerEditContents, undefined, DialogModes.NO);
-                    var smartDoc2 = app.activeDocument;
-                    
-                    // 在智慧型物件內部調整影像尺寸為寬度 4000px
-                    var currentWidth = smartDoc2.width.as('px');
-                    var targetWidth = 4000;
-                    var scaleRatio = targetWidth / currentWidth;
-                    var newHeight = smartDoc2.height.as('px') * scaleRatio;
-                    
-                    smartDoc2.resizeImage(UnitValue(targetWidth, 'px'), UnitValue(newHeight, 'px'), null, ResampleMethod.BICUBIC);
-                    
-                    // 轉換為 sRGB 後導出 FB JPG
-                    smartDoc2.convertProfile('sRGB IEC61966-2.1', Intent.RELATIVECOLORIMETRIC, true, false);
-                    saveJpgOverwrite(smartDoc2, fbOutput);
-                    
-                    // 儲存並關閉智慧型物件（保存影像尺寸調整）
-                    smartDoc2.save();
-                    smartDoc2.close();
-                    
-                    // 返回主文件
-                    app.activeDocument = doc;
-            "
-        fi
-        
-        # IG 部分：將智慧型物件置中並導出 IG JPG
-        if [ "$DO_IG" = true ]; then
-            # 如果沒有做 FB，需要先進入智慧型物件調整尺寸再回來
-            if [ "$DO_FB" = false ]; then
-                JS_CODE+="
-                    // 編輯智慧型物件：調整影像尺寸
-                    executeAction(idplacedLayerEditContents, undefined, DialogModes.NO);
-                    var smartDoc2 = app.activeDocument;
-                    
-                    // 在智慧型物件內部調整影像尺寸為寬度 4000px
-                    var currentWidth = smartDoc2.width.as('px');
-                    var targetWidth = 4000;
-                    var scaleRatio = targetWidth / currentWidth;
-                    var newHeight = smartDoc2.height.as('px') * scaleRatio;
-                    
-                    smartDoc2.resizeImage(UnitValue(targetWidth, 'px'), UnitValue(newHeight, 'px'), null, ResampleMethod.BICUBIC);
-                    
-                    // 儲存並關閉智慧型物件
-                    smartDoc2.save();
-                    smartDoc2.close();
-                    
-                    // 返回主文件
-                    app.activeDocument = doc;
-                "
-            fi
-            
-            JS_CODE+="
-                    // 將智慧型物件置中對齊（在 4160px 寬的畫布上，4000px 智慧型物件會有左右各 80px 留白）
-                    var currentLayer = doc.activeLayer;
-                    var docWidth = doc.width.as('px');
-                    var docHeight = doc.height.as('px');
-                    var docCenterX = docWidth / 2;
-                    var docCenterY = docHeight / 2;
-                    
-                    var bounds = currentLayer.bounds;
-                    var layerCenterX = (bounds[0].as('px') + bounds[2].as('px')) / 2;
-                    var layerCenterY = (bounds[1].as('px') + bounds[3].as('px')) / 2;
-                    
-                    var deltaX = docCenterX - layerCenterX;
-                    var deltaY = docCenterY - layerCenterY;
-                    
-                    currentLayer.translate(deltaX, deltaY);
-                    
-                    // 轉換為 sRGB 後導出 IG JPG
-                    doc.convertProfile('sRGB IEC61966-2.1', Intent.RELATIVECOLORIMETRIC, true, false);
-                    saveJpgOverwrite(doc, igOutput);
-            "
-        fi
-        
-        # 儲存並關閉 PSD
-        JS_CODE+="
-                    // 儲存 PSD
-                    doc.save();
-                    doc.close(SaveOptions.DONOTSAVECHANGES);
-        "
-        
-        # 使用 osascript 執行 Photoshop JavaScript
-        if osascript - "$PHOTOSHOP_APP_PATH" "$JS_CODE" <<'APPLESCRIPT' > /dev/null; then
-on run argv
-    set appPath to item 1 of argv as text
-    set jsCode to item 2 of argv
-
-    tell application appPath
-        with timeout of 1800 seconds
-            «event miscDjxM» jsCode
-        end timeout
-    end tell
-end run
-APPLESCRIPT
-            echo "  ✓ 完成"
-            # 更新 EXIF 時間為當下時間
-            EXIF_FILES=()
-            if [ "$DO_FB" = true ]; then EXIF_FILES+=("$fb_output"); fi
-            if [ "$DO_IG" = true ]; then EXIF_FILES+=("$ig_output"); fi
-            exiftool -overwrite_original -AllDates="now" "${EXIF_FILES[@]}" > /dev/null 2>&1
-            echo "  ✓ EXIF 時間已更新"
-        else
-            echo "  ✗ 處理失敗"
-        fi
-    done
-    
-    echo ""
-    MODES=""
-    if [ "$DO_IG" = true ]; then MODES+="IG "; fi
-    if [ "$DO_FB" = true ]; then MODES+="FB "; fi
-    echo "所有檔案已處理完成（模式：${MODES}）"
-    
-    # 關閉 Photoshop
-    echo "正在關閉 Photoshop..."
-    osascript - "$PHOTOSHOP_APP_PATH" <<'APPLESCRIPT' > /dev/null 2>&1
-on run argv
-    set appPath to item 1 of argv as text
-    tell application appPath to quit
-end run
-APPLESCRIPT
-    echo "✓ Photoshop 已關閉"
+if [ ${#JOB_PSD_FILES[@]} -gt 0 ]; then
+    run_photoshop_outputs
 fi
 
 echo "完成！"
