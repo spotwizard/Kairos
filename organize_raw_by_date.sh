@@ -4,6 +4,11 @@ set -u
 
 SOURCE_DIR="/Volumes/Untitled/DCIM"
 TARGET_ROOT="/Users/robbie/Pictures/原圖"
+# 記憶卡的磁碟區（DCIM 的上一層），複製與驗證都成功後自動退出
+CARD_VOLUME=$(dirname -- "$SOURCE_DIR")
+DISKUTIL_BIN="${KAIROS_DISKUTIL_BIN:-/usr/sbin/diskutil}"
+EJECT_ATTEMPTS="${KAIROS_EJECT_ATTEMPTS:-3}"
+EJECT_RETRY_SECONDS="${KAIROS_EJECT_RETRY_SECONDS:-3}"
 RAW_EXTENSIONS=(
     3fr ari arq arw bay bmq cap cine cr2 cr3 crw cs1 dc2 dcr dcs dng
     drf eip erf fff gpr iiq k25 kdc mdc mef mos mrw nef nrw orf pef
@@ -149,6 +154,34 @@ verify_copies() (
     (( failed == 0 ))
 )
 
+# Spotlight 等程式可能還在讀取記憶卡，退出失敗時稍等再試
+eject_card() {
+    local attempt=1
+    local error_output=""
+
+    if [[ ! -x "$DISKUTIL_BIN" ]]; then
+        printf '⚠ 找不到 diskutil，無法自動退出記憶卡，請在 Finder 手動退出後再拔除。\n' >&2
+        return 1
+    fi
+
+    printf '正在退出記憶卡：%s\n' "$CARD_VOLUME"
+    while true; do
+        if error_output=$("$DISKUTIL_BIN" eject "$CARD_VOLUME" 2>&1); then
+            printf '✓ 已退出記憶卡，可以拔除。\n'
+            return 0
+        fi
+        if (( attempt >= EJECT_ATTEMPTS )); then
+            break
+        fi
+        sleep "$EJECT_RETRY_SECONDS"
+        attempt=$((attempt + 1))
+    done
+
+    printf '%s\n' "$error_output" >&2
+    printf '⚠ 無法退出記憶卡（可能有其他程式正在使用），請在 Finder 手動退出後再拔除。\n' >&2
+    return 1
+}
+
 status=0
 move_by_date DateTimeOriginal 'defined $DateTimeOriginal'
 result=$?
@@ -174,6 +207,8 @@ fi
 
 if (( status == 0 )); then
     printf '複製與驗證完成。所有來源檔案均已保留。\n'
+    # 退出失敗不影響已完成的複製，只提示手動退出
+    eject_card || true
 else
     printf '複製或驗證失敗。所有來源檔案均已保留。\n' >&2
 fi

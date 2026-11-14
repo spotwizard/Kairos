@@ -16,6 +16,8 @@ SUDO_BIN="${KAIROS_SUDO_BIN:-sudo}"
 PMSET_BIN="${KAIROS_PMSET_BIN:-/usr/bin/pmset}"
 CAFFEINATE_BIN="${KAIROS_CAFFEINATE_BIN:-/usr/bin/caffeinate}"
 GUARD_WAIT_SECONDS="${KAIROS_KEEP_AWAKE_WAIT_SECONDS:-5}"
+# 要求輸入密碼前先切換成英數輸入法
+ASCII_INPUT_SCRIPT="${KAIROS_ASCII_INPUT_SCRIPT:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/ascii_input.sh}"
 
 if [ "$#" -eq 0 ]; then
     echo "用法：$0 指令 [參數...]" >&2
@@ -84,6 +86,10 @@ start_guard() {
     fi
 
     echo "需要輸入電腦的登入密碼，暫時關閉睡眠，讓 Mac 蓋上螢幕後仍繼續執行（程序結束後自動恢復）"
+    # 幾分鐘內剛輸入過密碼時 sudo 不會詢問，不必切換輸入法
+    if ! "$SUDO_BIN" -n -v > /dev/null 2>&1; then
+        /bin/bash "$ASCII_INPUT_SCRIPT" > /dev/null 2>&1 || true
+    fi
     if ! "$SUDO_BIN" -p "電腦登入密碼：" -v; then
         return 1
     fi

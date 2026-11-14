@@ -29,6 +29,7 @@ test_syntax() {
         "$ROOT/search_select.sh" \
         "$ROOT/dropbox_offline.sh" \
         "$ROOT/keep_awake.sh" \
+        "$ROOT/ascii_input.sh" \
         "$ROOT/tests/run.sh" || fail "Shell 語法檢查未通過"
 
     # macOS 內建 bash 3.2 會把緊接在 $變數 後面的中文字元當成變數名稱的一部分，必須寫成 ${變數}
@@ -40,7 +41,8 @@ test_syntax() {
         "$ROOT/multi_select.sh" \
         "$ROOT/search_select.sh" \
         "$ROOT/dropbox_offline.sh" \
-        "$ROOT/keep_awake.sh"; then
+        "$ROOT/keep_awake.sh" \
+        "$ROOT/ascii_input.sh"; then
         fail "變數後面緊接非 ASCII 字元時必須加大括號"
     fi
 }
@@ -124,6 +126,21 @@ exit 0
 MOCK
     chmod +x "$mock_bin/exiftool"
 
+    cat > "$mock_bin/diskutil" <<'MOCK'
+#!/usr/bin/env bash
+
+printf '%s\n' "$*" >> "$MOCK_DISKUTIL_LOG"
+if [ "${MOCK_EJECT_FAIL:-0}" = "1" ]; then
+    printf 'Volume failed to eject\n' >&2
+    exit 1
+fi
+MOCK
+    chmod +x "$mock_bin/diskutil"
+    export KAIROS_DISKUTIL_BIN="$mock_bin/diskutil"
+    export KAIROS_EJECT_RETRY_SECONDS=0
+    export MOCK_DISKUTIL_LOG="$test_dir/diskutil.log"
+    : > "$MOCK_DISKUTIL_LOG"
+
     printf 'ORIGINAL' > "$source_dir/相機 A/ORIGINAL.ArW"
     printf 'FALLBACK' > "$source_dir/相機 A/FALLBACK.CR2"
     if ! output=$(PATH="$mock_bin:$PATH" "$test_script" 2>&1); then
@@ -132,17 +149,31 @@ MOCK
     expect_file "$target_root/20260815/ORIGINAL.ArW"
     expect_file "$target_root/20260816/FALLBACK.CR2"
     [[ "$output" = *"驗證進度："*"100% (2/2)"* ]] || fail "驗證進度條未完成到 100%：$output"
+    [ "$(cat "$MOCK_DISKUTIL_LOG")" = "eject $test_dir/source" ] || fail "傳輸成功後應退出記憶卡：$(cat "$MOCK_DISKUTIL_LOG")"
+    [[ "$output" = *"已退出記憶卡"* ]] || fail "未提示已退出記憶卡：$output"
+    expect_file "$source_dir/相機 A/ORIGINAL.ArW"
+
+    # 退出失敗時重試，仍失敗則提示手動退出，但傳輸本身算成功
+    : > "$MOCK_DISKUTIL_LOG"
+    if ! output=$(MOCK_EJECT_FAIL=1 PATH="$mock_bin:$PATH" "$test_script" 2>&1); then
+        fail "退出記憶卡失敗不應讓傳輸失敗：$output"
+    fi
+    [ "$(wc -l < "$MOCK_DISKUTIL_LOG" | tr -d ' ')" = 3 ] || fail "退出記憶卡失敗時應重試 3 次"
+    [[ "$output" = *"無法退出記憶卡"* ]] || fail "退出失敗時應提示手動退出：$output"
+    : > "$MOCK_DISKUTIL_LOG"
 
     if ! output=$(PATH="$mock_bin:$PATH" "$test_script" 2>&1); then
         fail "目的檔內容相同時不應該失敗：$output"
     fi
     [[ "$output" = *"已存在，略過複製並交由內容驗證：2 個 RAW 檔案"* ]] || fail "未摘要已存在的 RAW：$output"
     [[ "$output" != *"already exists"* ]] || fail "不應把已存在且相同的 RAW 顯示成 Error"
+    : > "$MOCK_DISKUTIL_LOG"
 
     if output=$(MOCK_OTHER_ERROR=1 PATH="$mock_bin:$PATH" "$test_script" 2>&1); then
         fail "非重複檔案的 ExifTool 錯誤不應被忽略"
     fi
     [[ "$output" = *"simulated read failure"* ]] || fail "真正的 ExifTool 錯誤沒有保留"
+    [ ! -s "$MOCK_DISKUTIL_LOG" ] || fail "傳輸失敗時不應退出記憶卡"
 
     printf 'DIFFERENT' > "$target_root/20260815/ORIGINAL.ArW"
     if output=$(MOCK_SKIP_COPY=1 PATH="$mock_bin:$PATH" "$test_script" 2>&1); then
@@ -163,6 +194,8 @@ MOCK
         fail "缺少拍攝日期時應該失敗"
     fi
     [[ "$output" = *"缺少或無效的 DateTimeOriginal/CreateDate"* ]] || fail "未回報日期 metadata 缺失"
+    [ ! -s "$MOCK_DISKUTIL_LOG" ] || fail "驗證失敗時不應退出記憶卡"
+    unset KAIROS_DISKUTIL_BIN KAIROS_EJECT_RETRY_SECONDS MOCK_DISKUTIL_LOG
 }
 
 test_rename_raw() {
@@ -927,7 +960,12 @@ non_interactive=false
 while [ "$#" -gt 0 ]; do
     case "$1" in
         -p) shift 2 ;;
-        -v) [ "${MOCK_SUDO_FAIL:-0}" = "1" ] && exit 1; exit 0 ;;
+        -v)
+            [ "${MOCK_SUDO_FAIL:-0}" = "1" ] && exit 1
+            # sudo -n -v：沒有剛輸入過的密碼時失敗，代表接下來會詢問密碼
+            [ "$non_interactive" = true ] && [ "${MOCK_SUDO_CACHED:-0}" != "1" ] && exit 1
+            exit 0
+            ;;
         -n) non_interactive=true; shift ;;
         *) break ;;
     esac
@@ -944,16 +982,23 @@ case "$1" in
     *) exit 2 ;;
 esac
 MOCK
-    chmod +x "$mock_bin/sudo" "$mock_bin/pmset"
+    cat > "$mock_bin/ascii-input" <<'MOCK'
+#!/usr/bin/env bash
+
+printf 'ascii\n' >> "$MOCK_ASCII_LOG"
+MOCK
+    chmod +x "$mock_bin/sudo" "$mock_bin/pmset" "$mock_bin/ascii-input"
 
     run_keep_awake() {
         MOCK_PMSET_STATE="$dir/state" KAIROS_SUDO_BIN="$mock_bin/sudo" KAIROS_PMSET_BIN="$mock_bin/pmset" \
+            KAIROS_ASCII_INPUT_SCRIPT="$mock_bin/ascii-input" MOCK_ASCII_LOG="$dir/ascii.log" \
             KAIROS_CAFFEINATE_BIN="$mock_bin/missing-caffeinate" KAIROS_KEEP_AWAKE_WAIT_SECONDS=3 \
             /bin/bash "$ROOT/keep_awake.sh" "$@" 2>&1
     }
 
     # 執行期間關閉睡眠，結束後恢復，並傳回指令的結束狀態
     printf '0' > "$dir/state"
+    : > "$dir/ascii.log"
     status=0
     output=$(run_keep_awake /bin/bash -c 'printf "during=%s\n" "$(cat "$1")"; exit 3' child "$dir/state") || status=$?
     [ "$status" -eq 3 ] || fail "防止睡眠程式應傳回指令的結束狀態（實際 ${status}）：$output"
@@ -961,6 +1006,13 @@ MOCK
     [[ "$output" = *"已暫時關閉睡眠"* ]] || fail "未提示已關閉睡眠：$output"
     [ "$(cat "$dir/state")" = 0 ] || fail "結束後應恢復睡眠設定"
     [[ "$output" = *"已恢復原本的睡眠設定"* ]] || fail "未提示已恢復睡眠設定：$output"
+    [ "$(cat "$dir/ascii.log")" = "ascii" ] || fail "要求輸入密碼前應切換成英數輸入法"
+
+    # 剛輸入過密碼、sudo 不會詢問時，不切換輸入法
+    printf '0' > "$dir/state"
+    : > "$dir/ascii.log"
+    output=$(MOCK_SUDO_CACHED=1 run_keep_awake /bin/true) || fail "剛輸入過密碼時執行失敗：$output"
+    [ ! -s "$dir/ascii.log" ] || fail "sudo 不會詢問密碼時不應切換輸入法"
 
     # 原本就關閉睡眠時，結束後維持關閉
     printf '1' > "$dir/state"
@@ -978,6 +1030,7 @@ MOCK
     printf '0' > "$dir/state"
     MOCK_PMSET_STATE="$dir/state" KAIROS_SUDO_BIN="$mock_bin/sudo" KAIROS_PMSET_BIN="$mock_bin/pmset" \
         KAIROS_CAFFEINATE_BIN="$mock_bin/missing-caffeinate" \
+        KAIROS_ASCII_INPUT_SCRIPT="$mock_bin/ascii-input" MOCK_ASCII_LOG="$dir/ascii.log" \
         /bin/bash "$ROOT/keep_awake.sh" /bin/sleep 30 > /dev/null 2>&1 &
     wrapper_pid=$!
     waited=0
