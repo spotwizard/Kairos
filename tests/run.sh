@@ -873,8 +873,20 @@ MOCK
 #!/bin/bash
 [ -e "$MOCK_RUNNING_DIR/running.${2}" ] || [ -e "$MOCK_RUNNING_DIR/launched.${2}" ]
 MOCK
+    # osascript -e 指令：記錄指令；osascript - 讀入關閉對話框的 AppleScript：記錄呼叫，並回報 $MOCK_DIALOGS 個對話框已關閉（只回報一次）
     cat > "$mock_bin/osascript" <<'MOCK'
 #!/bin/bash
+if [ "$1" = "-" ]; then
+    grep -q "Choose Application" || exit 1
+    echo "dismiss $2 $3" >> "$MOCK_RUNNING_DIR/dismiss.log"
+    if [ -n "${MOCK_DIALOGS:-}" ] && [ ! -e "$MOCK_RUNNING_DIR/dialogs.closed" ]; then
+        : > "$MOCK_RUNNING_DIR/dialogs.closed"
+        echo "$MOCK_DIALOGS"
+    else
+        echo 0
+    fi
+    exit 0
+fi
 echo "$2" >> "$MOCK_RUNNING_DIR/osascript.log"
 MOCK
     cat > "$mock_bin/killall" <<'MOCK'
@@ -896,6 +908,7 @@ MOCK
     output=$(run_offline "$dir/本機.ARW") || fail "本機檔案不應失敗：$output"
     [[ "$output" = *"皆已在本機"* ]] || fail "未回報檔案皆已在本機：$output"
     [ ! -e "$dir/killall.log" ] || fail "沒有下載時不應關閉對話框"
+    [ ! -e "$dir/dismiss.log" ] || fail "沒有下載時不應尋找對話框"
 
     : > "$dir/佔位.ARW"
     : > "$dir/佔位.ARW.placeholder"
@@ -906,14 +919,20 @@ MOCK
     [ ! -e "$dir/佔位.ARW.placeholder" ] || fail "下載後檔案仍是佔位檔"
 
     # 下載後被開啟的 app 若原本沒開著就關閉；原本就開著的不動；並關閉「未設定應用程式」對話框
-    rm -f "$dir/osascript.log" "$dir/killall.log" "$dir/launched.Preview" "$dir/launched.Photos"
+    rm -f "$dir/osascript.log" "$dir/killall.log" "$dir/dismiss.log" "$dir/launched.Preview" "$dir/launched.Photos"
     : > "$dir/佔位.ARW.placeholder"
+    : > "$dir/佔位.acr"
+    : > "$dir/佔位.acr.placeholder"
     : > "$dir/running.Photos"
-    output=$(run_offline "$dir/佔位.ARW") || fail "Dropbox 佔位檔下載失敗：$output"
+    output=$(MOCK_DIALOGS=1 run_offline "$dir/佔位.ARW" "$dir/佔位.acr") || fail "Dropbox 佔位檔下載失敗：$output"
+    grep -q "^dismiss 選擇應用程式 取消$" "$dir/dismiss.log" 2>/dev/null \
+        || fail "下載後應以按鈕文字尋找「未設定應用程式」對話框：$(cat "$dir/dismiss.log" 2>/dev/null)"
+    [[ "$output" = *"已關閉 1 個「未設定應用程式來打開文件」對話框"* ]] || fail "未回報關閉的對話框數量：$output"
     [ "$(cat "$dir/osascript.log" 2>/dev/null)" = 'tell application "Preview" to quit' ] \
         || fail "只應關閉下載前沒開著的 Preview：$(cat "$dir/osascript.log" 2>/dev/null)"
     [ "$(cat "$dir/killall.log" 2>/dev/null)" = "CoreServicesUIAgent" ] || fail "下載後應關閉「未設定應用程式」對話框"
-    rm -f "$dir/running.Photos" "$dir/launched.Preview" "$dir/launched.Photos" "$dir/osascript.log" "$dir/killall.log"
+    rm -f "$dir/running.Photos" "$dir/launched.Preview" "$dir/launched.Photos" "$dir/osascript.log" "$dir/killall.log" \
+        "$dir/dismiss.log" "$dir/dialogs.closed" "$dir/佔位.acr"
 
     : > "$dir/線上.ARW"
     : > "$dir/線上.ARW.dataless"

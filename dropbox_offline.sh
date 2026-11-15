@@ -25,9 +25,12 @@ OFFLINE_OPEN_BIN="${KAIROS_OPEN_BIN:-open}"
 OFFLINE_PGREP_BIN="${KAIROS_PGREP_BIN:-pgrep}"
 OFFLINE_OSASCRIPT_BIN="${KAIROS_OSASCRIPT_BIN:-osascript}"
 OFFLINE_KILLALL_BIN="${KAIROS_KILLALL_BIN:-killall}"
-OFFLINE_CLEANUP_WAIT_SECONDS="${KAIROS_OFFLINE_CLEANUP_WAIT_SECONDS:-3}"
+OFFLINE_CLEANUP_WAIT_SECONDS="${KAIROS_OFFLINE_CLEANUP_WAIT_SECONDS:-8}"
 # Dropbox 下載完檔案後會用預設程式開啟它：RAW 會開在這些 app，旁邊的 .xmp、.acr 則跳出「未設定應用程式」對話框
 OFFLINE_SIDE_EFFECT_APPS=(Preview Photos)
+# 「未設定應用程式來打開文件」對話框上的按鈕文字（英文介面的對應文字寫在 AppleScript 內）
+OFFLINE_DIALOG_CHOOSE_PREFIX="選擇應用程式"
+OFFLINE_DIALOG_CANCEL="取消"
 OFFLINE_DOWNLOAD_SECONDS="${KAIROS_OFFLINE_DOWNLOAD_SECONDS:-600}"
 
 # 輸出「旗標 大小 區塊數」，旗標沒有時為 -
@@ -112,12 +115,85 @@ snapshot_running_apps() {
     done
 }
 
+# 用「系統事件」找出「未設定應用程式來打開文件」對話框並按「取消」，輸出關閉的數量。
+# 只認同時有「選擇應用程式…」與「取消」按鈕的對話框；不確定對話框屬於哪個程式，
+# 所以檢查 CoreServicesUIAgent、Finder、Dropbox 三者。需要終端機的「輔助使用」權限（前置作業操作 Camera Raw 時已需要）
+dismiss_no_app_dialogs() {
+    "$OFFLINE_OSASCRIPT_BIN" - "$OFFLINE_DIALOG_CHOOSE_PREFIX" "$OFFLINE_DIALOG_CANCEL" <<'APPLESCRIPT' 2> /dev/null
+on run argv
+    set choosePrefixes to {item 1 of argv, "Choose Application"}
+    set cancelNames to {item 2 of argv, "Cancel"}
+    set closedCount to 0
+    tell application "System Events"
+        repeat with procItem in {"CoreServicesUIAgent", "Finder", "Dropbox"}
+            set procName to procItem as text
+            if exists process procName then
+                set proc to process procName
+                repeat with i from (count of windows of proc) to 1 by -1
+                    try
+                        set win to window i of proc
+                        set isCandidate to (procName is "CoreServicesUIAgent")
+                        if not isCandidate then
+                            try
+                                set isCandidate to ((subrole of win) is in {"AXDialog", "AXSystemDialog"})
+                            end try
+                        end if
+                        if isCandidate then
+                            set hasChoose to false
+                            set cancelButton to missing value
+                            repeat with uiItem in (entire contents of win)
+                                try
+                                    if class of uiItem is button then
+                                        set buttonName to name of uiItem
+                                        if buttonName is not missing value then
+                                            repeat with choosePrefix in choosePrefixes
+                                                if buttonName starts with (choosePrefix as text) then set hasChoose to true
+                                            end repeat
+                                            if cancelNames contains buttonName then set cancelButton to contents of uiItem
+                                        end if
+                                    end if
+                                end try
+                            end repeat
+                            if hasChoose and cancelButton is not missing value then
+                                click cancelButton
+                                set closedCount to closedCount + 1
+                            end if
+                        end if
+                    end try
+                end repeat
+            end if
+        end repeat
+    end tell
+    return closedCount
+end run
+APPLESCRIPT
+}
+
+# 關閉對話框並累計到 OFFLINE_DIALOGS_CLOSED
+dismiss_and_count_dialogs() {
+    local closed
+
+    closed=$(dismiss_no_app_dialogs)
+    if [[ "$closed" =~ ^[0-9]+$ ]]; then
+        OFFLINE_DIALOGS_CLOSED=$((OFFLINE_DIALOGS_CLOSED + closed))
+    fi
+    return 0
+}
+
+# Dropbox 在下載完成後才開啟檔案，對話框可能晚幾秒出現，
+# 因此在 OFFLINE_CLEANUP_WAIT_SECONDS 秒內每秒檢查一次，出現就關閉
 cleanup_download_side_effects() {
     local app
     local before
     local was_running
+    local waited=0
 
-    sleep "$OFFLINE_CLEANUP_WAIT_SECONDS"
+    while true; do
+        dismiss_and_count_dialogs
+        [ "$waited" -ge "$OFFLINE_CLEANUP_WAIT_SECONDS" ] && break
+        sleep 1
+        waited=$((waited + 1))
+    done
     for app in "${OFFLINE_SIDE_EFFECT_APPS[@]}"; do
         was_running=false
         for before in "${OFFLINE_APPS_BEFORE[@]}"; do
@@ -127,8 +203,11 @@ cleanup_download_side_effects() {
             "$OFFLINE_OSASCRIPT_BIN" -e "tell application \"$app\" to quit" > /dev/null 2>&1
         fi
     done
-    # 關閉「未設定應用程式來打開文件」對話框；系統會自動重新啟動這個背景程式
+    # 終端機沒有「輔助使用」權限時上面無法按按鈕；結束這個背景程式也能關掉由它顯示的對話框，系統會自動重新啟動它
     "$OFFLINE_KILLALL_BIN" CoreServicesUIAgent > /dev/null 2>&1
+    if [ "$OFFLINE_DIALOGS_CLOSED" -gt 0 ]; then
+        echo "已關閉 ${OFFLINE_DIALOGS_CLOSED} 個「未設定應用程式來打開文件」對話框"
+    fi
     return 0
 }
 
@@ -150,6 +229,7 @@ make_available_offline() {
     if [ "$requested" -gt 0 ]; then
         echo "有 ${requested} 個檔案僅供線上存取，正在請 Dropbox 下載到本機（最多等待 ${OFFLINE_DOWNLOAD_SECONDS} 秒）..."
         snapshot_running_apps
+        OFFLINE_DIALOGS_CLOSED=0
         for file in "${PENDING_FILES[@]}"; do
             echo "下載：$(basename "$file")"
             request_download "$file"
@@ -162,6 +242,10 @@ make_available_offline() {
             fi
             sleep 1
             waited=$((waited + 1))
+            # 下載期間先下載完的 .xmp、.acr 已經跳出對話框，每 5 秒關一次，避免一直疊上去
+            if [ $((waited % 5)) -eq 0 ]; then
+                dismiss_and_count_dialogs
+            fi
             if [ $((waited % 10)) -eq 0 ]; then
                 echo "  等待 Dropbox 下載中，尚有 ${#PENDING_FILES[@]} 個檔案..."
             fi
