@@ -228,6 +228,7 @@ CAMERA_RAW_DENOISE_OCR_IMAGE="${TMPDIR:-/tmp}/kairos_camera_raw_ocr.png"
 CAMERA_RAW_OPEN_OBJECT_BUTTON="開啟物件"
 CAMERA_RAW_DONE_BUTTON="完成"
 CAMERA_RAW_DONE_BUTTON_EN="Done"
+CAMERA_RAW_DONE_AX_WAIT_SECONDS=10
 MANUAL_NOISE_REDUCTION_AMOUNT=20
 CAMERA_RAW_CROP_WIDTH=4
 CAMERA_RAW_CROP_HEIGHT=5
@@ -1332,13 +1333,14 @@ func fail(_ message: String, _ code: Int32) -> Never {
     exit(code)
 }
 
-let args = CommandLine.arguments
-guard args.count >= 7,
-      let pointWidth = Double(args[2]),
-      let pointHeight = Double(args[3]) else {
-    fail("參數錯誤", 2)
+// 參數：截圖路徑 寬 高 x y（取最後 5 個，不受第一個參數是否為腳本路徑影響）
+let args = Array(CommandLine.arguments.suffix(5))
+guard args.count == 5,
+      let pointWidth = Double(args[1]),
+      let pointHeight = Double(args[2]) else {
+    fail("參數錯誤：\(CommandLine.arguments)", 2)
 }
-let imagePath = args[1]
+let imagePath = args[0]
 
 if !CGPreflightScreenCaptureAccess() {
     _ = CGRequestScreenCaptureAccess()
@@ -1347,7 +1349,7 @@ if !CGPreflightScreenCaptureAccess() {
 
 let capture = Process()
 capture.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
-capture.arguments = ["-x", "-R\(args[4]),\(args[5]),\(args[2]),\(args[3])", imagePath]
+capture.arguments = ["-x", "-R\(args[3]),\(args[4]),\(args[1]),\(args[2])", imagePath]
 do {
     try capture.run()
     capture.waitUntilExit()
@@ -1619,10 +1621,67 @@ APPLESCRIPT
     click_ui_point "$click_x" "$click_y"
 }
 
+# 以輔助使用功能直接按下 Camera Raw 按鈕，不移動滑鼠
+press_camera_raw_button_ax() {
+    local button_name="$1"
+
+    osascript - "$PHOTOSHOP_APP" "$CAMERA_RAW_WINDOW_MATCH" "$button_name" <<'APPLESCRIPT' > /dev/null 2>&1
+on run argv
+    set appName to item 1 of argv
+    set windowMatch to item 2 of argv
+    set buttonName to item 3 of argv
+
+    tell application "System Events"
+        set frontmost of process appName to true
+        tell process appName
+            set rawWindow to missing value
+            repeat with w in windows
+                set wName to name of w as text
+                if (wName contains windowMatch) or (wName contains ".ARW") or (wName contains ".RAW") or (wName contains ".DNG") or (exists button "開啟物件" of w) or (exists button "Open Object" of w) or (exists button "完成" of w) or (exists button "Done" of w) then
+                    set rawWindow to w
+                    exit repeat
+                end if
+            end repeat
+            if rawWindow is missing value then error "找不到 Camera Raw 視窗"
+            if not (exists button buttonName of rawWindow) then error "找不到 button"
+            perform action "AXPress" of button buttonName of rawWindow
+        end tell
+    end tell
+end run
+APPLESCRIPT
+}
+
+wait_for_camera_raw_window_gone() {
+    local max_wait="$1"
+    local elapsed=0
+
+    while [ "$elapsed" -lt "$max_wait" ]; do
+        if ! camera_raw_window_is_open; then
+            return 0
+        fi
+        sleep 1
+        elapsed=$((elapsed + 1))
+    done
+    ! camera_raw_window_is_open
+}
+
 click_camera_raw_done_button() {
     local name
 
     echo "正在按 Camera Raw「${CAMERA_RAW_DONE_BUTTON}」（套用設定並關閉對話框，非「開啟物件」）..."
+    # 「完成」位於螢幕底部；Camera Raw 一關閉，Dock 會出現在滑鼠下方，
+    # 用滑鼠點擊時放開按鍵的動作可能落在 Dock 上（例如開啟「預覽程式」），因此先用輔助使用功能按下
+    for name in "$CAMERA_RAW_DONE_BUTTON" "$CAMERA_RAW_DONE_BUTTON_EN"; do
+        if press_camera_raw_button_ax "$name"; then
+            if wait_for_camera_raw_window_gone "$CAMERA_RAW_DONE_AX_WAIT_SECONDS"; then
+                echo "✓ 已按下「${name}」"
+                return 0
+            fi
+            echo "  以輔助使用功能按下「${name}」後 ${CAMERA_RAW_DONE_AX_WAIT_SECONDS}s 內未關閉，改用滑鼠點擊"
+            break
+        fi
+    done
+
     for name in "$CAMERA_RAW_DONE_BUTTON" "$CAMERA_RAW_DONE_BUTTON_EN"; do
         if click_camera_raw_button "$name"; then
             echo "✓ 已按下「${name}」"
