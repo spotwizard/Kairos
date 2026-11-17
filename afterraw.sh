@@ -222,6 +222,10 @@ CAMERA_RAW_DENOISE_CHECKBOX="去除雜色"
 CAMERA_RAW_DENOISE_CLICK_X_OFFSET=1398
 CAMERA_RAW_DENOISE_CLICK_Y_OFFSET=917
 CAMERA_RAW_DENOISE_SCROLL_DOWN_STEPS=8
+# 文字辨識找到「去除雜色」後，勾選框中心位於文字左緣往左約 13 point
+CAMERA_RAW_DENOISE_CHECKBOX_LEFT_OFFSET=13
+CAMERA_RAW_DENOISE_OCR_MAX_SCROLL_STEPS=20
+CAMERA_RAW_DENOISE_OCR_MAX_ATTEMPTS=26
 CAMERA_RAW_OPEN_OBJECT_BUTTON="開啟物件"
 CAMERA_RAW_DONE_BUTTON="完成"
 CAMERA_RAW_DONE_BUTTON_EN="Done"
@@ -1234,16 +1238,8 @@ wait_for_camera_raw_button_enabled() {
     return 1
 }
 
-scroll_camera_raw_panel() {
-    local delta_y="$1"
-    local repeat_count="$2"
+get_camera_raw_window_bounds() {
     local bounds
-    local x
-    local y
-    local width
-    local height
-    local panel_x
-    local panel_y
 
     bounds=$(
         osascript - "$PHOTOSHOP_APP" "$CAMERA_RAW_WINDOW_MATCH" <<'APPLESCRIPT' 2> /dev/null
@@ -1272,16 +1268,27 @@ end run
 APPLESCRIPT
     )
 
-    if [ -z "$bounds" ]; then
-        return 1
-    fi
-
-    IFS=, read -r x y width height <<< "$bounds"
-    case "$x,$y,$width,$height" in
-        *[!0-9,]*)
+    case "$bounds" in
+        ""|*[!0-9,-]*)
             return 1
             ;;
     esac
+    printf '%s\n' "$bounds"
+}
+
+scroll_camera_raw_panel() {
+    local delta_y="$1"
+    local repeat_count="$2"
+    local bounds
+    local x
+    local y
+    local width
+    local height
+    local panel_x
+    local panel_y
+
+    bounds=$(get_camera_raw_window_bounds) || return 1
+    IFS=, read -r x y width height <<< "$bounds"
 
     # Keep the pointer inside the edit panel. The right toolbar/scrollbar area does
     # not reliably receive wheel events in Camera Raw.
@@ -1307,50 +1314,210 @@ click_camera_raw_denoise_known_position() {
     local click_x
     local click_y
 
-    bounds=$(
-        osascript - "$PHOTOSHOP_APP" "$CAMERA_RAW_WINDOW_MATCH" <<'APPLESCRIPT' 2>/dev/null
-on run argv
-    set appName to item 1 of argv
-    set windowMatch to item 2 of argv
-
-    tell application "System Events"
-        set frontmost of process appName to true
-        tell process appName
-            set rawWindow to missing value
-            repeat with w in windows
-                set wName to name of w as text
-                if (wName contains windowMatch) or (wName contains ".ARW") or (wName contains ".RAW") or (wName contains ".DNG") or (exists button "開啟物件" of w) or (exists button "Open Object" of w) or (exists button "完成" of w) or (exists button "Done" of w) then
-                    set rawWindow to w
-                    exit repeat
-                end if
-            end repeat
-            if rawWindow is missing value then error "找不到 Camera Raw 視窗"
-            set rawPosition to position of rawWindow
-            set rawSize to size of rawWindow
-            return (item 1 of rawPosition as text) & "," & (item 2 of rawPosition as text) & "," & (item 1 of rawSize as text) & "," & (item 2 of rawSize as text)
-        end tell
-    end tell
-end run
-APPLESCRIPT
-    )
-
-    if [ -z "$bounds" ]; then
+    if ! bounds=$(get_camera_raw_window_bounds); then
         echo "  固定座標 fallback 失敗：找不到 Camera Raw 視窗位置"
         return 1
     fi
-
     IFS=, read -r x y width height <<< "$bounds"
-    case "$x,$y,$width,$height" in
-        *[!0-9,]*)
-            echo "  固定座標 fallback 失敗：Camera Raw 視窗座標格式無效：${bounds}"
-            return 1
-            ;;
-    esac
 
     click_x=$((x + CAMERA_RAW_DENOISE_CLICK_X_OFFSET))
     click_y=$((y + CAMERA_RAW_DENOISE_CLICK_Y_OFFSET))
     echo "  固定座標 fallback：Camera Raw 視窗=${x},${y},${width},${height}；點擊座標=${click_x},${click_y}（offset=${CAMERA_RAW_DENOISE_CLICK_X_OFFSET},${CAMERA_RAW_DENOISE_CLICK_Y_OFFSET}）"
     click_ui_point "$click_x" "$click_y"
+}
+
+# 截取 Camera Raw 視窗畫面並以 macOS Vision 文字辨識，輸出每段文字：
+# x<TAB>y<TAB>寬<TAB>高<TAB>文字（座標為相對視窗左上角的 point；含「去除雜色」的段落只框該四個字）
+ocr_camera_raw_window() {
+    local width="$1"
+    local height="$2"
+    local x="$3"
+    local y="$4"
+    local work_dir
+    local status=0
+
+    command -v swift > /dev/null 2>&1 || return 1
+    command -v screencapture > /dev/null 2>&1 || return 1
+    work_dir=$(mktemp -d "${TMPDIR:-/tmp}/kairos_ocr.XXXXXX") || return 1
+
+    if ! screencapture -x -R "${x},${y},${width},${height}" "$work_dir/window.png" 2> /dev/null \
+        || [ ! -s "$work_dir/window.png" ]; then
+        rm -rf "$work_dir"
+        return 1
+    fi
+
+    cat > "$work_dir/ocr.swift" <<'SWIFT'
+import Foundation
+import ImageIO
+import Vision
+
+let args = CommandLine.arguments
+guard args.count >= 4,
+      let pointWidth = Double(args[2]),
+      let pointHeight = Double(args[3]),
+      let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: args[1]) as CFURL, nil),
+      let cgImage = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
+    exit(2)
+}
+
+let request = VNRecognizeTextRequest()
+request.recognitionLevel = .accurate
+request.usesLanguageCorrection = false
+request.recognitionLanguages = ["zh-Hant", "en-US"]
+do {
+    try VNImageRequestHandler(cgImage: cgImage, options: [:]).perform([request])
+} catch {
+    exit(3)
+}
+
+for observation in request.results ?? [] {
+    guard let candidate = observation.topCandidates(1).first else { continue }
+    let text = candidate.string
+        .replacingOccurrences(of: "\t", with: " ")
+        .replacingOccurrences(of: "\n", with: " ")
+    var box = observation.boundingBox
+    for key in ["去除雜色", "Denoise"] {
+        if let range = text.range(of: key), let keyBox = try? candidate.boundingBox(for: range) {
+            box = keyBox.boundingBox
+            break
+        }
+    }
+    let left = Int((box.minX * pointWidth).rounded())
+    let top = Int(((1 - box.maxY) * pointHeight).rounded())
+    let boxWidth = Int((box.width * pointWidth).rounded())
+    let boxHeight = Int((box.height * pointHeight).rounded())
+    print("\(left)\t\(top)\t\(boxWidth)\t\(boxHeight)\t\(text)")
+}
+SWIFT
+
+    swift "$work_dir/ocr.swift" "$work_dir/window.png" "$width" "$height" 2> /dev/null || status=$?
+    rm -rf "$work_dir"
+    return "$status"
+}
+
+# 依文字辨識結果決定下一步（只看視窗右半部的編輯面板）：
+#   check X Y   「去除雜色」在可見範圍內，點 X,Y（文字左側的勾選框）
+#   expand X Y  只看到「細部」標題且下方有空間卻沒有「去除雜色」，視為「細部」已收合，點標題展開
+#   scroll      面板目前看不到「去除雜色」，需要捲動
+#   none        辨識不到任何文字（多半是終端機沒有「螢幕錄製」權限）
+pick_camera_raw_denoise_target() {
+    local ocr_output="$1"
+    local width="$2"
+    local height="$3"
+
+    printf '%s\n' "$ocr_output" | awk -F '\t' \
+        -v width="$width" -v height="$height" \
+        -v offset="$CAMERA_RAW_DENOISE_CHECKBOX_LEFT_OFFSET" '
+        NF >= 5 {
+            x = $1 + 0; y = $2 + 0; w = $3 + 0; h = $4 + 0
+            text = $5
+            for (i = 6; i <= NF; i++) text = text " " $i
+            gsub(/^[ ]+|[ ]+$/, "", text)
+            if (x < width / 2) next
+            lines++
+            # 標題前的展開箭頭可能被辨識成 >、v 等符號
+            header = text
+            sub(/^[>vV<›〉˅⌄ ]+/, "", header)
+            center_y = int(y + h / 2)
+            if (!denoise_found && (index(text, "去除雜色") || index(text, "Denoise"))) {
+                denoise_found = 1
+                denoise_x = x - offset
+                denoise_y = center_y
+            }
+            if (!detail_found && (header == "細部" || header == "Detail")) {
+                detail_found = 1
+                detail_x = int(x + w / 2)
+                detail_y = center_y
+            }
+        }
+        END {
+            bottom_limit = height - 90
+            if (denoise_found && denoise_y > 0 && denoise_y < bottom_limit) {
+                print "check " denoise_x " " denoise_y
+            } else if (!denoise_found && detail_found && detail_y < height - 140) {
+                print "expand " detail_x " " detail_y
+            } else if (lines > 0) {
+                print "scroll"
+            } else {
+                print "none"
+            }
+        }'
+}
+
+# 用畫面文字辨識找到「去除雜色」勾選框並點擊；「細部」被收合時先展開。
+# 傳回 0=已點擊；1=找不到；2=無法辨識畫面文字（應改用固定座標）
+click_camera_raw_denoise_by_ocr() {
+    local bounds
+    local x
+    local y
+    local width
+    local height
+    local ocr_output
+    local action
+    local target_x
+    local target_y
+    local expanded=0
+    local scanned_from_top=0
+    local scroll_steps=0
+    local attempt=0
+
+    while [ "$attempt" -lt "$CAMERA_RAW_DENOISE_OCR_MAX_ATTEMPTS" ]; do
+        attempt=$((attempt + 1))
+        if ! bounds=$(get_camera_raw_window_bounds); then
+            echo "  文字辨識：找不到 Camera Raw 視窗位置"
+            return 2
+        fi
+        IFS=, read -r x y width height <<< "$bounds"
+
+        ocr_output=$(ocr_camera_raw_window "$width" "$height" "$x" "$y" || true)
+        action=$(pick_camera_raw_denoise_target "$ocr_output" "$width" "$height")
+        read -r action target_x target_y <<< "$action"
+
+        case "$action" in
+            check)
+                target_x=$((x + target_x))
+                target_y=$((y + target_y))
+                echo "  文字辨識：找到「${CAMERA_RAW_DENOISE_CHECKBOX}」，點擊勾選框 ${target_x},${target_y}"
+                click_ui_point "$target_x" "$target_y" || return 2
+                return 0
+                ;;
+            expand)
+                if [ "$expanded" -eq 1 ]; then
+                    echo "  文字辨識：已展開過「細部」仍看不到「${CAMERA_RAW_DENOISE_CHECKBOX}」"
+                    return 1
+                fi
+                target_x=$((x + target_x))
+                target_y=$((y + target_y))
+                echo "  文字辨識：「細部」已收合，點擊標題展開 ${target_x},${target_y}"
+                click_ui_point "$target_x" "$target_y" || return 2
+                expanded=1
+                sleep 0.8
+                ;;
+            scroll)
+                # 先從固定位置開始；找不到就回到頂部逐步往下找
+                if [ "$scanned_from_top" -eq 0 ]; then
+                    echo "  文字辨識：目前畫面沒有「${CAMERA_RAW_DENOISE_CHECKBOX}」，從面板頂部逐步往下找..."
+                    scroll_camera_raw_panel_to_top || return 2
+                    scanned_from_top=1
+                else
+                    if [ "$scroll_steps" -ge "$CAMERA_RAW_DENOISE_OCR_MAX_SCROLL_STEPS" ]; then
+                        echo "  文字辨識：捲到底仍找不到「${CAMERA_RAW_DENOISE_CHECKBOX}」"
+                        return 1
+                    fi
+                    scroll_camera_raw_panel_step_down || return 2
+                    scroll_steps=$((scroll_steps + 1))
+                fi
+                sleep 0.4
+                ;;
+            *)
+                echo "  文字辨識：讀不到 Camera Raw 畫面文字（請確認終端機已有「螢幕錄製」權限）"
+                return 2
+                ;;
+        esac
+    done
+
+    echo "  文字辨識：嘗試 ${CAMERA_RAW_DENOISE_OCR_MAX_ATTEMPTS} 次仍未點到「${CAMERA_RAW_DENOISE_CHECKBOX}」"
+    return 1
 }
 
 scroll_camera_raw_panel_to_denoise_known_position() {
@@ -1613,6 +1780,7 @@ enable_camera_raw_denoise() {
     local file_count="${1:-1}"
     local disable_wait_max
     local enable_wait_max
+    local ocr_status
 
     if ! [[ "$file_count" =~ ^[0-9]+$ ]] || [ "$file_count" -lt 1 ]; then
         file_count=1
@@ -1630,13 +1798,29 @@ enable_camera_raw_denoise() {
         echo "⚠ 無法將右側面板捲到「${CAMERA_RAW_DENOISE_CHECKBOX}」固定位置；仍嘗試用目前位置固定座標點擊"
     fi
 
-    echo "正在用固定座標點擊 Camera Raw「${CAMERA_RAW_DENOISE_CHECKBOX}」（不搜尋文字）..."
-    if ! click_camera_raw_denoise_known_position; then
-        echo "⚠ 無法用固定座標點選「${CAMERA_RAW_DENOISE_CHECKBOX}」"
-        DENOISE_BATCH_CONFIRMED=0
-        DENOISE_UI_CLICKED=0
-        return 0
-    fi
+    echo "正在以畫面文字辨識尋找 Camera Raw「${CAMERA_RAW_DENOISE_CHECKBOX}」..."
+    ocr_status=0
+    click_camera_raw_denoise_by_ocr || ocr_status=$?
+    case "$ocr_status" in
+        0)
+            ;;
+        2)
+            echo "⚠ 無法以文字辨識定位，改用固定座標點擊「${CAMERA_RAW_DENOISE_CHECKBOX}」..."
+            if ! click_camera_raw_denoise_known_position; then
+                echo "⚠ 無法用固定座標點選「${CAMERA_RAW_DENOISE_CHECKBOX}」"
+                DENOISE_BATCH_CONFIRMED=0
+                DENOISE_UI_CLICKED=0
+                return 0
+            fi
+            ;;
+        *)
+            # 畫面看得到文字卻找不到「去除雜色」時，不再盲點固定座標，以免把「細部」等面板收合
+            echo "⚠ 找不到「${CAMERA_RAW_DENOISE_CHECKBOX}」，未點擊"
+            DENOISE_BATCH_CONFIRMED=0
+            DENOISE_UI_CLICKED=0
+            return 0
+            ;;
+    esac
     DENOISE_UI_CLICKED=1
 
     if verify_camera_raw_checkbox_checked "$CAMERA_RAW_DENOISE_CHECKBOX"; then

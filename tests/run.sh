@@ -690,6 +690,42 @@ test_afterraw_file_arguments() {
     [[ "$output" = *"--open-psd 是獨立開啟模式"* ]] || fail "未回報 --open-psd 與 --make-psd 衝突：$output"
 }
 
+test_afterraw_denoise_target() {
+    local functions
+    local result
+
+    functions=$(sed -n '/^pick_camera_raw_denoise_target() {/,/^}/p' "$ROOT/afterraw.sh")
+    [ -n "$functions" ] || fail "找不到 pick_camera_raw_denoise_target"
+
+    pick() {
+        CAMERA_RAW_DENOISE_CHECKBOX_LEFT_OFFSET=13 /bin/bash -c "$functions"'
+pick_camera_raw_denoise_target "$1" "$2" "$3"' _ "$1" "$2" "$3"
+    }
+
+    # 「細部」展開：點「去除雜色」文字左側的勾選框
+    result=$(pick $'1300\t922\t30\t18\t細部\n1412\t960\t60\t18\t去除雜色\n1412\t1003\t60\t18\tRaw 細部' 1728 1117)
+    [ "$result" = "check 1399 969" ] || fail "細部展開時應點擊去除雜色勾選框：${result}"
+
+    # 「細部」收合（使用者影片中的狀態）：先點標題展開，不可點到其他位置
+    result=$(pick $'1300\t925\t30\t18\t> 細部\n1300\t965\t30\t18\t光學' 1728 1117)
+    [ "$result" = "expand 1315 934" ] || fail "細部收合時應點擊標題展開：${result}"
+
+    # 「細部」標題在面板底部、下方內容看不到：捲動而不是點標題（避免把展開的面板收合）
+    result=$(pick $'1300\t1000\t30\t18\t細部' 1728 1117)
+    [ "$result" = "scroll" ] || fail "細部在底部時應捲動：${result}"
+
+    # 「去除雜色」被底部按鈕列遮住：捲動
+    result=$(pick $'1412\t1050\t60\t18\t去除雜色' 1728 1117)
+    [ "$result" = "scroll" ] || fail "去除雜色在底部時應捲動：${result}"
+
+    # 左半部（影像或底片列）的文字不算
+    result=$(pick $'200\t500\t60\t18\t去除雜色' 1728 1117)
+    [ "$result" = "none" ] || fail "左半部文字不應採用：${result}"
+
+    result=$(pick '' 1728 1117)
+    [ "$result" = "none" ] || fail "沒有辨識結果時應回傳 none：${result}"
+}
+
 test_multi_select() {
     if ! command -v python3 > /dev/null 2>&1; then
         printf '略過多選清單按鍵測試：找不到 python3\n'
@@ -1081,6 +1117,7 @@ test_search_select
 test_dropbox_offline
 test_afterraw_redo_arguments
 test_afterraw_file_arguments
+test_afterraw_denoise_target
 test_organize_raw_by_date
 test_rename_raw
 test_dashboard
