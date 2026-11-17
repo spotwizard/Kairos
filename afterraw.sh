@@ -66,7 +66,8 @@ if [ "$DATE_SPECIFIED" = true ] && ! [[ "$DATE_PREFIX" =~ ^[0-9]{8}$ ]]; then
 fi
 
 # 後置輸出模式如果沒有指定 --make-psd、--ig 或 --fb，則根據 RAW 重新產生 PSD、IG、FB；
-# 只指定 --ig／--fb 時，根據 PSD 目錄內現有的 PSD 重新產生 JPG，不重建 PSD
+# 只指定 --ig／--fb 時，已有 PSD 的檔案根據現有 PSD 重新產生 JPG（保留手動修改），
+# 沒有 PSD 的檔案先從 RAW 建立 PSD 並存檔，再輸出 JPG
 if [ "$DO_PRE" = false ] && [ "$DO_LOAD_RAW" = false ] && [ "$DO_OPEN_PSD" = false ] \
     && [ "$DO_MAKE_PSD" = false ] && [ "$DO_IG" = false ] && [ "$DO_FB" = false ]; then
     DO_MAKE_PSD=true
@@ -74,9 +75,9 @@ if [ "$DO_PRE" = false ] && [ "$DO_LOAD_RAW" = false ] && [ "$DO_OPEN_PSD" = fal
     DO_FB=true
 fi
 
-OUTPUT_FROM_PSD=false
+REUSE_EXISTING_PSD=false
 if [ "$DO_MAKE_PSD" = false ] && { [ "$DO_IG" = true ] || [ "$DO_FB" = true ]; }; then
-    OUTPUT_FROM_PSD=true
+    REUSE_EXISTING_PSD=true
 fi
 
 if [ "$FILE_SPECIFIED" = true ]; then
@@ -85,14 +86,10 @@ if [ "$FILE_SPECIFIED" = true ]; then
             echo "錯誤：--file 必須是檔名，不能包含路徑"
             exit 1
         fi
-        # 開啟 PSD 與根據 PSD 輸出 JPG 的 --file 是 PSD 目錄內的檔名，其他模式是 RAW 目錄內的檔名
-        if [ "$DO_OPEN_PSD" = true ] || [ "$OUTPUT_FROM_PSD" = true ]; then
+        # 開啟 PSD 的 --file 是 PSD 目錄內的檔名，其他模式是 RAW 目錄內的檔名
+        if [ "$DO_OPEN_PSD" = true ]; then
             if ! [[ "$raw_file_name" =~ \.[Pp][Ss][Dd]$ ]]; then
-                if [ "$DO_OPEN_PSD" = true ]; then
-                    echo "錯誤：--open-psd 的 --file 必須是 PSD 目錄內的 .psd 檔名"
-                else
-                    echo "錯誤：根據 PSD 輸出 IG／FB 時，--file 必須是 PSD 目錄內的 .psd 檔名"
-                fi
+                echo "錯誤：--open-psd 的 --file 必須是 PSD 目錄內的 .psd 檔名"
                 exit 1
             fi
         elif ! [[ "$raw_file_name" =~ \.([Aa][Rr][Ww]|[Rr][Aa][Ww])$ ]]; then
@@ -136,7 +133,7 @@ if [ -z "$FOLDER_NAME" ]; then
     echo "  開啟 PSD 檔案: $0 --open-psd [--file PSD檔名] <資料夾名稱>"
     echo "  輸出 PSD＋IG＋FB: $0 [--date YYYYMMDD | --file RAW檔名] <資料夾名稱>"
     echo "  輸出 PSD: $0 --make-psd [--date YYYYMMDD | --file RAW檔名] <資料夾名稱>"
-    echo "  根據 PSD 輸出 IG／FB: $0 [--ig] [--fb] [--date YYYYMMDD | --file PSD檔名] <資料夾名稱>"
+    echo "  輸出 IG／FB（已有 PSD 時根據 PSD，沒有時先從 RAW 建立 PSD）: $0 [--ig] [--fb] [--date YYYYMMDD | --file RAW檔名] <資料夾名稱>"
     exit 1
 fi
 
@@ -162,9 +159,9 @@ fi
 
 echo "找到資料夾：$TARGET_DIR"
 
-# 開啟 PSD 與根據 PSD 輸出 IG／FB 只讀 PSD 目錄，不需要 RAW 目錄
+# 開啟 PSD 只讀 PSD 目錄，不需要 RAW 目錄
 SOURCE_IS_PSD=false
-if [ "$DO_OPEN_PSD" = true ] || [ "$OUTPUT_FROM_PSD" = true ]; then
+if [ "$DO_OPEN_PSD" = true ]; then
     SOURCE_IS_PSD=true
 fi
 
@@ -546,12 +543,85 @@ collect_psd_files() {
     return 0
 }
 
+# 找出 RAW 在 PSD 目錄內的同名 PSD（.psd 或 .PSD），印出路徑；沒有時回傳 1
+existing_psd_for_raw() {
+    local raw_file="$1"
+    local base_name
+    local ext
+
+    base_name=$(basename "$raw_file")
+    base_name="${base_name%.*}"
+    for ext in psd PSD; do
+        if [ -f "$PSD_DIR/${base_name}.${ext}" ]; then
+            printf '%s\n' "$PSD_DIR/${base_name}.${ext}"
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+# 決定每個 RAW 的輸出來源：
+# 只輸出 IG／FB（REUSE_EXISTING_PSD）時，PSD 目錄已有同名 PSD 的放進 REUSE_PSD_FILES（根據現有 PSD 輸出），
+# 其餘放進 BUILD_RAW_FILES（之後從 RAW 建立 PSD）；沒有指定檔名時，PSD 目錄內沒有對應 RAW 的 PSD 也根據 PSD 輸出。
+# 其他模式全部放進 BUILD_RAW_FILES。
+split_raw_by_existing_psd() {
+    local raw_file
+    local psd_file
+    local psd_name
+    local psd_base
+    local raw_name
+    local has_raw
+
+    PSD_DIR="$TARGET_DIR/PSD"
+    REUSE_PSD_FILES=()
+    BUILD_RAW_FILES=()
+
+    if [ "$REUSE_EXISTING_PSD" = false ]; then
+        BUILD_RAW_FILES=("${RAW_FILES_FOUND[@]}")
+        return 0
+    fi
+
+    for raw_file in "${RAW_FILES_FOUND[@]}"; do
+        if psd_file=$(existing_psd_for_raw "$raw_file"); then
+            REUSE_PSD_FILES+=("$psd_file")
+            echo "✓ 已有 PSD，根據 PSD 輸出：$(basename "$psd_file")"
+        else
+            BUILD_RAW_FILES+=("$raw_file")
+            echo "⊕ 沒有 PSD，先從 RAW 建立 PSD：$(basename "$raw_file")"
+        fi
+    done
+
+    if [ "$FILE_SPECIFIED" = true ] || [ ! -d "$PSD_DIR" ]; then
+        return 0
+    fi
+
+    while IFS= read -r -d '' psd_file; do
+        psd_name=$(basename "$psd_file")
+        psd_base="${psd_name%.*}"
+        has_raw=false
+        for raw_file in "${RAW_FILES_FOUND[@]}"; do
+            raw_name=$(basename "$raw_file")
+            if [ "${raw_name%.*}" = "$psd_base" ]; then
+                has_raw=true
+                break
+            fi
+        done
+        if [ "$has_raw" = false ]; then
+            REUSE_PSD_FILES+=("$psd_file")
+            echo "✓ 沒有對應 RAW 的 PSD，根據 PSD 輸出：$psd_name"
+        fi
+    done < <(find "$PSD_DIR" -maxdepth 1 -type f -iname "${DATE_PREFIX}*.psd" -print0)
+
+    return 0
+}
+
 prepare_output_dirs() {
     PSD_DIR="$TARGET_DIR/PSD"
     FB_DIR="$TARGET_DIR/FB"
     IG_DIR="$TARGET_DIR/IG"
 
-    if [ "$DO_MAKE_PSD" = true ]; then
+    if [ "$DO_MAKE_PSD" = true ] || [ ${#FILES_TO_OPEN[@]} -gt 0 ]; then
         if [ ! -d "$PSD_DIR" ]; then
             echo "建立 PSD 資料夾：$PSD_DIR"
             mkdir -p "$PSD_DIR" || return 1
@@ -750,7 +820,7 @@ doc.close(SaveOptions.DONOTSAVECHANGES);
     printf '%s' "$js"
 }
 
-# 依 JOB_PSD_FILES（與對應的 JOB_RAW_FILES，根據 PSD 輸出時為空字串）逐一交給 Photoshop 處理
+# 依 JOB_PSD_FILES（與對應的 JOB_RAW_FILES，根據現有 PSD 輸出時為空字串）逐一交給 Photoshop 處理
 run_photoshop_outputs() {
     local i
     local psd_file
@@ -771,7 +841,7 @@ run_photoshop_outputs() {
     if [ "$DO_MAKE_PSD" = true ]; then
         echo "開始將 RAW/ARW 檔案匯入到 PSD，並輸出：${modes}"
     else
-        echo "開始根據 PSD 輸出：${modes}"
+        echo "開始輸出：${modes}（已有 PSD 的檔案根據現有 PSD 輸出；沒有 PSD 的檔案先從 RAW 建立 PSD 並存檔）"
     fi
     echo ""
 
@@ -2074,43 +2144,6 @@ if [ "$DO_OPEN_PSD" = true ]; then
     exit 0
 fi
 
-# 根據 PSD 目錄內現有的 PSD 重新產生 IG、FB，不讀 RAW、不重建 PSD
-if [ "$OUTPUT_FROM_PSD" = true ]; then
-    collect_psd_files || exit 1
-
-    if [ ${#PSD_FILES_FOUND[@]} -eq 0 ]; then
-        if [ -n "$DATE_PREFIX" ]; then
-            echo "沒有找到檔名以 ${DATE_PREFIX} 開頭的 .psd 檔案"
-        else
-            echo "沒有找到 .psd 檔案"
-        fi
-        exit 0
-    fi
-
-    echo ""
-    echo "共找到 ${#PSD_FILES_FOUND[@]} 個 PSD 檔案"
-
-    echo ""
-    if ! make_available_offline "${PSD_FILES_FOUND[@]}"; then
-        exit 1
-    fi
-
-    OUTPUT_SOURCE_FILES=("${PSD_FILES_FOUND[@]}")
-    OUTPUT_SOURCE_LABEL="PSD"
-    JOB_PSD_FILES=("${PSD_FILES_FOUND[@]}")
-    JOB_RAW_FILES=()
-    for psd_file in "${PSD_FILES_FOUND[@]}"; do
-        JOB_RAW_FILES+=("")
-    done
-
-    echo ""
-    prepare_output_dirs || exit 1
-    cleanup_orphan_outputs || exit 1
-    run_photoshop_outputs
-    echo "完成！"
-    exit 0
-fi
-
 if [ "$FILE_SPECIFIED" = true ]; then
     for raw_file_name in "${RAW_FILE_NAMES[@]}"; do
         RAW_FILES_FOUND+=("$RAW_DIR/$raw_file_name")
@@ -2130,8 +2163,10 @@ else
     done < <(find "$RAW_DIR" -maxdepth 1 -type f -iname "${DATE_PREFIX}*.raw" -print0)
 fi
 
-# 檢查是否有找到檔案
-if [ ${#RAW_FILES_FOUND[@]} -eq 0 ]; then
+split_raw_by_existing_psd
+
+# 檢查是否有找到檔案（只輸出 IG／FB 時，沒有 RAW 但有 PSD 也照常輸出）
+if [ ${#RAW_FILES_FOUND[@]} -eq 0 ] && [ ${#REUSE_PSD_FILES[@]} -eq 0 ]; then
     if [ -n "$DATE_PREFIX" ]; then
         echo "沒有找到檔名以 ${DATE_PREFIX} 開頭的 .ARW 或 .RAW 檔案"
     else
@@ -2145,10 +2180,13 @@ if [ -n "$DATE_PREFIX" ]; then
     echo "指定日期：${DATE_PREFIX}（僅處理此前綴的檔案）"
 fi
 echo "共找到 ${#RAW_FILES_FOUND[@]} 個 RAW 檔案"
+if [ ${#REUSE_PSD_FILES[@]} -gt 0 ]; then
+    echo "其中 ${#REUSE_PSD_FILES[@]} 個檔案根據現有 PSD 輸出，${#BUILD_RAW_FILES[@]} 個檔案先從 RAW 建立 PSD"
+fi
 
-# Camera Raw 也會讀取 RAW 旁的 .xmp、.acr，一併確保在本機
-OFFLINE_FILES=()
-for offline_raw_file in "${RAW_FILES_FOUND[@]}"; do
+# Camera Raw 也會讀取 RAW 旁的 .xmp、.acr，一併確保在本機；根據現有 PSD 輸出的檔案只需要 PSD
+OFFLINE_FILES=("${REUSE_PSD_FILES[@]}")
+for offline_raw_file in "${BUILD_RAW_FILES[@]}"; do
     OFFLINE_FILES+=("$offline_raw_file")
     for offline_sidecar_ext in xmp acr; do
         if [ -f "${offline_raw_file%.*}.${offline_sidecar_ext}" ]; then
@@ -2277,8 +2315,8 @@ if [ "$DO_PRE" = true ]; then
     exit 0
 fi
 
-# 後置輸出只處理已完成人工 Camera Raw 操作並有 sidecar 的檔案
-for file in "${RAW_FILES_FOUND[@]}"; do
+# 從 RAW 建立 PSD 只處理已完成人工 Camera Raw 操作並有 sidecar 的檔案
+for file in "${BUILD_RAW_FILES[@]}"; do
     base_name="${file%.*}"
     acr_file="${base_name}.acr"
     xmp_file="${base_name}.xmp"
@@ -2286,46 +2324,69 @@ for file in "${RAW_FILES_FOUND[@]}"; do
     if [ -f "$acr_file" ] && [ -f "$xmp_file" ]; then
         FILES_TO_OPEN+=("$file")
         echo "找到符合後置輸出條件的檔案：$(basename "$file")"
+    elif [ "$REUSE_EXISTING_PSD" = true ]; then
+        echo "⊘ 跳過（沒有 PSD，且缺少 .acr 或 .xmp，無法從 RAW 建立 PSD）：$(basename "$file")"
     else
         echo "⊘ 跳過後置輸出（缺少 .acr 或 .xmp）：$(basename "$file")"
     fi
 done
 
-if [ ${#FILES_TO_OPEN[@]} -eq 0 ]; then
-    echo "沒有找到符合後置輸出條件的檔案（同時存在 .acr 與 .xmp 的 .ARW 或 .RAW 檔）"
+if [ ${#FILES_TO_OPEN[@]} -eq 0 ] && [ ${#REUSE_PSD_FILES[@]} -eq 0 ]; then
+    if [ "$REUSE_EXISTING_PSD" = true ]; then
+        echo "沒有可輸出的檔案（PSD 目錄沒有對應的 PSD，RAW 也沒有同時存在 .acr 與 .xmp，無法建立 PSD）"
+    else
+        echo "沒有找到符合後置輸出條件的檔案（同時存在 .acr 與 .xmp 的 .ARW 或 .RAW 檔）"
+    fi
     exit 0
 fi
 
 echo ""
-echo "共找到 ${#FILES_TO_OPEN[@]} 個符合後置輸出條件的檔案"
-
-# 定義模板檔案路徑
-TEMPLATE_FILE="/Users/robbie/Dropbox/__攝影/__IG 底版.psd"
-
-# 檢查模板檔案是否存在
-if [ ! -f "$TEMPLATE_FILE" ]; then
-    echo "錯誤：找不到模板檔案「__IG 底版.psd」"
-    echo "路徑：$TEMPLATE_FILE"
-    exit 1
+if [ "$REUSE_EXISTING_PSD" = true ]; then
+    echo "共 ${#REUSE_PSD_FILES[@]} 個檔案根據現有 PSD 輸出，${#FILES_TO_OPEN[@]} 個檔案從 RAW 建立 PSD 後輸出"
+else
+    echo "共找到 ${#FILES_TO_OPEN[@]} 個符合後置輸出條件的檔案"
 fi
 
-echo "找到模板檔案：__IG 底版.psd"
-if ! make_available_offline "$TEMPLATE_FILE"; then
-    exit 1
+if [ ${#FILES_TO_OPEN[@]} -gt 0 ]; then
+    # 定義模板檔案路徑
+    TEMPLATE_FILE="/Users/robbie/Dropbox/__攝影/__IG 底版.psd"
+
+    # 檢查模板檔案是否存在
+    if [ ! -f "$TEMPLATE_FILE" ]; then
+        echo "錯誤：找不到模板檔案「__IG 底版.psd」"
+        echo "路徑：$TEMPLATE_FILE"
+        exit 1
+    fi
+
+    echo "找到模板檔案：__IG 底版.psd"
+    if ! make_available_offline "$TEMPLATE_FILE"; then
+        exit 1
+    fi
 fi
 
-OUTPUT_SOURCE_FILES=("${RAW_FILES_FOUND[@]}")
-OUTPUT_SOURCE_LABEL="RAW"
+# 清理孤兒輸出檔時，只輸出 IG／FB 的 JPG 有對應的 RAW 或 PSD 就保留
+OUTPUT_SOURCE_FILES=("${RAW_FILES_FOUND[@]}" "${REUSE_PSD_FILES[@]}")
+if [ "$REUSE_EXISTING_PSD" = true ]; then
+    OUTPUT_SOURCE_LABEL="RAW 或 PSD"
+else
+    OUTPUT_SOURCE_LABEL="RAW"
+fi
 
 prepare_output_dirs || exit 1
 cleanup_orphan_outputs || exit 1
 
-echo ""
-echo "開始準備 PSD 中介檔..."
-
-# 儲存 RAW 檔案和對應的 PSD 檔案配對
+# 儲存 RAW 檔案和對應的 PSD 檔案配對；根據現有 PSD 輸出時 RAW 為空字串
 JOB_PSD_FILES=()
 JOB_RAW_FILES=()
+for psd_file in "${REUSE_PSD_FILES[@]}"; do
+    JOB_PSD_FILES+=("$psd_file")
+    JOB_RAW_FILES+=("")
+done
+
+if [ ${#FILES_TO_OPEN[@]} -gt 0 ]; then
+    echo ""
+    echo "開始準備 PSD 中介檔..."
+fi
 
 # 對每個找到的檔案，複製模板並重新命名
 for file in "${FILES_TO_OPEN[@]}"; do

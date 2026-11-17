@@ -505,8 +505,8 @@ test_dashboard() {
     run_dashboard || fail "AfterRAW 輸出IG+FB 選單執行失敗"
     expect_dashboard_call $'afterraw-worker\t--ig\t--fb\tStone House'
     expect_keep_awake true "輸出IG+FB"
-    [ "$(sed -n '4p' "$TEST_ROOT/dashboard/menus.log")" = $'專案：Stone House｜輸出IG+FB｜選擇 PSD 檔案\t全部 PSD 檔案\tother.PSD\tphoto.psd' ] \
-        || fail "輸出IG+FB 根據 PSD 產生，應列出 PSD 檔名"
+    [ "$(sed -n '4p' "$TEST_ROOT/dashboard/menus.log")" = $'專案：Stone House｜輸出IG+FB｜選擇 RAW 檔案\t全部 RAW 檔案\tphoto.ARW\tphoto2.raw' ] \
+        || fail "輸出IG+FB 沒有 PSD 時要從 RAW 建立 PSD，應列出 RAW 檔名"
 
     reset_dashboard_log
     set_input_queue "3" "2" "8" "1" "esc" "esc" "esc"
@@ -534,12 +534,12 @@ test_dashboard() {
     expect_keep_awake true "指定 RAW 的輸出PSD"
 
     reset_dashboard_log
-    set_input_queue "3" "2" "9" "3" "esc" "esc" "esc"
-    run_dashboard || fail "AfterRAW 指定 PSD 輸出FB 執行失敗"
-    expect_dashboard_call $'afterraw-worker\t--fb\t--file\tphoto.psd\tStone House'
-    expect_keep_awake true "指定 PSD 的輸出FB"
-    grep -F "AfterRAW｜輸出FB｜photo.psd" "$TEST_ROOT/dashboard/output.log" > /dev/null \
-        || fail "指定 PSD 輸出FB 時程序標題應顯示 PSD 檔名"
+    set_input_queue "3" "2" "9" "2" "esc" "esc" "esc"
+    run_dashboard || fail "AfterRAW 指定 RAW 輸出FB 執行失敗"
+    expect_dashboard_call $'afterraw-worker\t--fb\t--file\tphoto.ARW\tStone House'
+    expect_keep_awake true "指定 RAW 的輸出FB"
+    grep -F "AfterRAW｜輸出FB｜photo.ARW" "$TEST_ROOT/dashboard/output.log" > /dev/null \
+        || fail "指定 RAW 輸出FB 時程序標題應顯示 RAW 檔名"
 
     reset_dashboard_log
     set_input_queue "3" "2" "1" "2" "y" "esc" "esc" "esc"
@@ -663,11 +663,16 @@ test_afterraw_file_arguments() {
     fi
     [[ "$output" = *"--open-psd 的 --file 必須是 PSD 目錄內的 .psd 檔名"* ]] || fail "未回報開啟 PSD 的 --file 副檔名錯誤：$output"
 
-    # 只輸出 IG、FB 時根據 PSD 產生，--file 必須是 PSD；輸出 PSD 時根據 RAW 產生，--file 必須是 RAW
-    if output=$(/bin/bash "$ROOT/afterraw.sh" --ig --fb --file 20260815_IMG0001.ARW "專案" 2>&1); then
-        fail "根據 PSD 輸出 IG／FB 時 --file 指定 RAW 檔應該失敗"
+    # 輸出 IG、FB 沒有 PSD 時要從 RAW 建立 PSD，--file 是 RAW 檔名；輸出 PSD 時 --file 也必須是 RAW
+    if output=$(/bin/bash "$ROOT/afterraw.sh" --ig --fb --file 20260815_IMG0001.psd "專案" 2>&1); then
+        fail "輸出 IG／FB 時 --file 指定 PSD 檔應該失敗"
     fi
-    [[ "$output" = *"根據 PSD 輸出 IG／FB 時，--file 必須是 PSD 目錄內的 .psd 檔名"* ]] || fail "未回報輸出 IG／FB 的 --file 副檔名錯誤：$output"
+    [[ "$output" = *"--file 必須是 RAW 目錄內的 .ARW 或 .RAW 檔名"* ]] || fail "未回報輸出 IG／FB 的 --file 副檔名錯誤：$output"
+
+    if output=$(/bin/bash "$ROOT/afterraw.sh" --fb --file 20260815_IMG0001.ARW "/nonexistent/專案" 2>&1); then
+        fail "不存在的專案應該失敗"
+    fi
+    [[ "$output" = *"找不到資料夾"* ]] || fail "輸出 FB 搭配 RAW 檔名應通過參數檢查：$output"
 
     if output=$(/bin/bash "$ROOT/afterraw.sh" --make-psd --file 20260815_IMG0001.psd "專案" 2>&1); then
         fail "輸出 PSD 時 --file 指定 PSD 檔應該失敗"
@@ -688,6 +693,38 @@ test_afterraw_file_arguments() {
         fail "--open-psd 搭配 --make-psd 應該失敗"
     fi
     [[ "$output" = *"--open-psd 是獨立開啟模式"* ]] || fail "未回報 --open-psd 與 --make-psd 衝突：$output"
+}
+
+test_afterraw_split_existing_psd() {
+    local functions
+    local dir="$TEST_ROOT/split_psd"
+    local result
+
+    functions=$(sed -n '/^existing_psd_for_raw() {/,/^}/p;/^split_raw_by_existing_psd() {/,/^}/p' "$ROOT/afterraw.sh")
+    [ -n "$functions" ] || fail "找不到 split_raw_by_existing_psd"
+
+    mkdir -p "$dir/RAW" "$dir/PSD"
+    touch "$dir/RAW/a.ARW" "$dir/RAW/b.ARW" "$dir/PSD/a.psd" "$dir/PSD/c.psd" "$dir/PSD/note.txt"
+
+    split() {
+        TARGET_DIR="$dir" REUSE_EXISTING_PSD="$1" FILE_SPECIFIED="$2" DATE_PREFIX="" /bin/bash -c "$functions"'
+RAW_FILES_FOUND=("$TARGET_DIR/RAW/a.ARW" "$TARGET_DIR/RAW/b.ARW")
+split_raw_by_existing_psd > /dev/null
+printf "reuse=%s|build=%s\n" "$(for f in "${REUSE_PSD_FILES[@]}"; do basename "$f"; done | sort | tr "\n" ,)" \
+    "$(for f in "${BUILD_RAW_FILES[@]}"; do basename "$f"; done | tr "\n" ,)"'
+    }
+
+    # 只輸出 IG／FB：a 已有 PSD 直接沿用，b 沒有 PSD 要從 RAW 建立，c 沒有 RAW 但有 PSD 也輸出
+    result=$(split true false)
+    [ "$result" = "reuse=a.psd,c.psd,|build=b.ARW," ] || fail "只輸出 IG／FB 時應沿用已有 PSD、缺少的從 RAW 建立：${result}"
+
+    # 指定檔名時只處理指定的 RAW，不加入沒有對應 RAW 的 PSD
+    result=$(split true true)
+    [ "$result" = "reuse=a.psd,|build=b.ARW," ] || fail "指定檔名時不應加入其他 PSD：${result}"
+
+    # 輸出PSD 系列一律從 RAW 重新產生
+    result=$(split false false)
+    [ "$result" = "reuse=|build=a.ARW,b.ARW," ] || fail "輸出PSD 時應全部從 RAW 建立：${result}"
 }
 
 test_afterraw_denoise_target() {
@@ -1117,6 +1154,7 @@ test_search_select
 test_dropbox_offline
 test_afterraw_redo_arguments
 test_afterraw_file_arguments
+test_afterraw_split_existing_psd
 test_afterraw_denoise_target
 test_organize_raw_by_date
 test_rename_raw

@@ -280,7 +280,7 @@ afterraw_menu() {
                 "9  輸出FB") || break
 
             # 前置作業要點擊 Camera Raw 畫面，螢幕蓋上後無法進行；只有輸出 PSD、IG、FB 防止睡眠
-            # 輸出PSD 系列根據 RAW 重新產生，列出 RAW 檔；只輸出 IG、FB 時根據現有 PSD 產生，列出 PSD 檔
+            # 輸出選項都列出 RAW 檔：輸出PSD 系列根據 RAW 重新產生；只輸出 IG、FB 時已有 PSD 就根據 PSD，沒有就先從 RAW 建立 PSD
             keep_awake=false
             kind="RAW"
             case "$choice" in
@@ -290,9 +290,9 @@ afterraw_menu() {
                 "4  開啟 PSD 檔案") title="AfterRAW｜開啟 PSD 檔案"; args=(--open-psd); kind="PSD" ;;
                 "5  輸出PSD+IG+FB") title="AfterRAW｜輸出PSD+IG+FB"; args=(); keep_awake=true ;;
                 "6  輸出PSD") title="AfterRAW｜輸出PSD"; args=(--make-psd); keep_awake=true ;;
-                "7  輸出IG+FB") title="AfterRAW｜輸出IG+FB"; args=(--ig --fb); kind="PSD"; keep_awake=true ;;
-                "8  輸出IG") title="AfterRAW｜輸出IG"; args=(--ig); kind="PSD"; keep_awake=true ;;
-                "9  輸出FB") title="AfterRAW｜輸出FB"; args=(--fb); kind="PSD"; keep_awake=true ;;
+                "7  輸出IG+FB") title="AfterRAW｜輸出IG+FB"; args=(--ig --fb); keep_awake=true ;;
+                "8  輸出IG") title="AfterRAW｜輸出IG"; args=(--ig); keep_awake=true ;;
+                "9  輸出FB") title="AfterRAW｜輸出FB"; args=(--fb); keep_awake=true ;;
                 *) continue ;;
             esac
             choose_files "$target" "${choice#*  }" "$kind" || continue
