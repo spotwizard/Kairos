@@ -714,17 +714,146 @@ printf "reuse=%s|build=%s\n" "$(for f in "${REUSE_PSD_FILES[@]}"; do basename "$
     "$(for f in "${BUILD_RAW_FILES[@]}"; do basename "$f"; done | tr "\n" ,)"'
     }
 
-    # 只輸出 IG／FB：a 已有 PSD 直接沿用，b 沒有 PSD 要從 RAW 建立，c 沒有 RAW 但有 PSD 也輸出
+    # 只輸出 IG／FB：a 已有 PSD 直接沿用，b 沒有 PSD 要從 RAW 建立，c 的 RAW 已不在，不輸出
     result=$(split true false)
-    [ "$result" = "reuse=a.psd,c.psd,|build=b.ARW," ] || fail "只輸出 IG／FB 時應沿用已有 PSD、缺少的從 RAW 建立：${result}"
+    [ "$result" = "reuse=a.psd,|build=b.ARW," ] || fail "只輸出 IG／FB 時應沿用已有 PSD、缺少的從 RAW 建立，RAW 已不在的 PSD 不輸出：${result}"
 
-    # 指定檔名時只處理指定的 RAW，不加入沒有對應 RAW 的 PSD
+    # 指定檔名時結果相同
     result=$(split true true)
     [ "$result" = "reuse=a.psd,|build=b.ARW," ] || fail "指定檔名時不應加入其他 PSD：${result}"
 
     # 輸出PSD 系列一律從 RAW 重新產生
     result=$(split false false)
     [ "$result" = "reuse=|build=a.ARW,b.ARW," ] || fail "輸出PSD 時應全部從 RAW 建立：${result}"
+}
+
+# 清除 RAW 已不在的輸出檔：直接測試清除函式
+test_afterraw_cleanup_outputs_without_raw() {
+    local functions
+    local dir="$TEST_ROOT/cleanup_outputs"
+    local output
+    local name
+
+    functions=$(sed -n '/^collect_all_raw_basenames() {/,/^}/p;/^raw_basename_exists() {/,/^}/p;/^cleanup_output_dir_without_raw() {/,/^}/p;/^cleanup_outputs_without_raw() {/,/^}/p' "$ROOT/afterraw.sh")
+    [[ "$functions" = *"cleanup_outputs_without_raw() {"* ]] || fail "找不到 cleanup_outputs_without_raw"
+
+    cleanup() {
+        TARGET_DIR="$1" RAW_DIR="$1/RAW" /bin/bash -c "$functions"'
+cleanup_outputs_without_raw'
+    }
+
+    mkdir -p "$dir/RAW" "$dir/PSD" "$dir/IG" "$dir/FB"
+    # a、b 的 RAW 還在（b 是 .raw 小寫副檔名）；gone、a2、[x] 的 RAW 已不在
+    touch "$dir/RAW/a.ARW" "$dir/RAW/a.xmp" "$dir/RAW/b.raw" "$dir/RAW/sidecar_only.xmp" "$dir/RAW/x.ARW"
+    touch "$dir/PSD/a.psd" "$dir/PSD/b.PSD" "$dir/PSD/gone.psd" "$dir/PSD/a2.psd" "$dir/PSD/sidecar_only.psd" "$dir/PSD/note.txt"
+    touch "$dir/IG/a.jpg" "$dir/IG/b.JPG" "$dir/IG/gone.jpg" "$dir/IG/gone 2.jpeg" "$dir/IG/[x].jpg" "$dir/IG/keep.png"
+    touch "$dir/FB/a.jpg" "$dir/FB/gone.jpg" "$dir/FB/a.b.jpg"
+    mkdir -p "$dir/IG/gone.jpg.d"
+
+    output=$(cleanup "$dir" 2>&1) || fail "清除 RAW 已不在的輸出檔失敗：$output"
+
+    for name in PSD/a.psd PSD/b.PSD PSD/note.txt IG/a.jpg IG/b.JPG IG/keep.png FB/a.jpg \
+        RAW/a.ARW RAW/a.xmp RAW/b.raw RAW/sidecar_only.xmp RAW/x.ARW; do
+        expect_file "$dir/$name"
+    done
+    expect_dir "$dir/IG/gone.jpg.d"
+    for name in PSD/gone.psd PSD/a2.psd PSD/sidecar_only.psd IG/gone.jpg "IG/gone 2.jpeg" "IG/[x].jpg" FB/gone.jpg FB/a.b.jpg; do
+        [ ! -e "$dir/$name" ] || fail "RAW 已不在的輸出檔未清除：${name}"
+    done
+    [[ "$output" = *"已刪除 RAW 已不在的 PSD 檔案：gone.psd"* ]] || fail "未列出已刪除的 PSD：$output"
+    [[ "$output" = *"已刪除 RAW 已不在的 IG 檔案：gone.jpg"* ]] || fail "未列出已刪除的 IG JPG：$output"
+    [[ "$output" = *"已刪除 RAW 已不在的 FB 檔案：gone.jpg"* ]] || fail "未列出已刪除的 FB JPG：$output"
+
+    # 再執行一次沒有東西可刪
+    output=$(cleanup "$dir" 2>&1) || fail "第二次清除失敗：$output"
+    [[ "$output" != *"已刪除"* ]] || fail "第二次清除不應再刪除檔案：$output"
+
+    # 沒有 IG、FB 目錄時照常完成
+    rm -rf "$dir/IG" "$dir/FB"
+    output=$(cleanup "$dir" 2>&1) || fail "缺少輸出目錄時清除失敗：$output"
+
+    # RAW 目錄內一個 RAW 都沒有時不刪除任何輸出檔
+    dir="$TEST_ROOT/cleanup_outputs_empty"
+    mkdir -p "$dir/RAW" "$dir/PSD" "$dir/IG" "$dir/FB"
+    touch "$dir/RAW/a.xmp" "$dir/PSD/a.psd" "$dir/IG/a.jpg" "$dir/FB/a.jpg"
+    output=$(cleanup "$dir" 2>&1) || fail "RAW 目錄沒有 RAW 時清除失敗：$output"
+    expect_file "$dir/PSD/a.psd"
+    expect_file "$dir/IG/a.jpg"
+    expect_file "$dir/FB/a.jpg"
+    [[ "$output" = *"不清除 PSD、IG、FB 的輸出檔"* ]] || fail "RAW 目錄沒有 RAW 時未說明不清除：$output"
+}
+
+# 五種輸出不論指定檔名、指定日期或全部，都會清除 RAW 已不在的 PSD、IG、FB 輸出檔；
+# 前置作業、載入 RAW 不清除。以改寫基礎路徑、略過 Photoshop 檢查的 afterraw.sh 副本執行到清除為止
+# （RAW 沒有 .xmp／.acr，因此不會進到 Photoshop）。
+test_afterraw_output_modes_cleanup() {
+    local dir="$TEST_ROOT/output_modes"
+    local base="$dir/base"
+    local project
+    local output
+    local mode
+    local scope
+    local name
+    local case_index=0
+    local -a args
+
+    mkdir -p "$dir/bin" "$base"
+    sed -e "s|^BASE_DIR=.*|BASE_DIR=\"$base\"|" -e 's/^select_photoshop_app || exit 1$/:/' \
+        "$ROOT/afterraw.sh" > "$dir/afterraw.sh"
+    cp "$ROOT/dropbox_offline.sh" "$dir/dropbox_offline.sh"
+    grep -q "^BASE_DIR=\"$base\"$" "$dir/afterraw.sh" || fail "測試用 afterraw.sh 未改寫基礎路徑"
+    ! grep -q '^select_photoshop_app || exit 1$' "$dir/afterraw.sh" || fail "測試用 afterraw.sh 未略過 Photoshop 檢查"
+    printf '#!/bin/bash\nexit 0\n' > "$dir/bin/exiftool"
+    chmod +x "$dir/bin/exiftool"
+
+    make_project() {
+        project="case_$1"
+        mkdir -p "$base/$project/RAW" "$base/$project/PSD" "$base/$project/IG" "$base/$project/FB"
+        touch "$base/$project/RAW/20260815_A.ARW" "$base/$project/RAW/20260816_B.ARW"
+        touch "$base/$project/PSD/20260815_GONE.psd" "$base/$project/IG/20260815_GONE.jpg" "$base/$project/FB/20260815_GONE.jpg"
+        touch "$base/$project/PSD/20260816_GONE.psd" "$base/$project/IG/20260816_GONE.jpg" "$base/$project/FB/20260816_GONE.jpg"
+        touch "$base/$project/IG/20260816_B.jpg" "$base/$project/FB/20260816_B.jpg"
+    }
+
+    for mode in "" "--make-psd" "--ig --fb" "--ig" "--fb"; do
+        for scope in "" "--file 20260815_A.ARW" "--date 20260815"; do
+            case_index=$((case_index + 1))
+            make_project "$case_index"
+            # shellcheck disable=SC2206
+            args=($mode $scope "$project")
+            output=$(PATH="$dir/bin:$PATH" /bin/bash "$dir/afterraw.sh" "${args[@]}" 2>&1) \
+                || fail "輸出（${mode:-PSD+IG+FB} ${scope:-全部}）執行失敗：$output"
+            for name in PSD/20260815_GONE.psd IG/20260815_GONE.jpg FB/20260815_GONE.jpg \
+                PSD/20260816_GONE.psd IG/20260816_GONE.jpg FB/20260816_GONE.jpg; do
+                [ ! -e "$base/$project/$name" ] \
+                    || fail "輸出（${mode:-PSD+IG+FB} ${scope:-全部}）未清除 RAW 已不在的 ${name}：$output"
+            done
+            expect_file "$base/$project/IG/20260816_B.jpg"
+            expect_file "$base/$project/FB/20260816_B.jpg"
+            expect_file "$base/$project/RAW/20260815_A.ARW"
+            expect_file "$base/$project/RAW/20260816_B.ARW"
+        done
+    done
+
+    # 載入 RAW 不是輸出，不清除輸出檔（開啟 Photoshop 失敗不影響這項檢查）
+    case_index=$((case_index + 1))
+    make_project "$case_index"
+    output=$(PATH="$dir/bin:$PATH" /bin/bash "$dir/afterraw.sh" --load-raw --file 20260815_A.ARW "$project" 2>&1)
+    expect_file "$base/$project/PSD/20260815_GONE.psd"
+    expect_file "$base/$project/IG/20260815_GONE.jpg"
+    expect_file "$base/$project/FB/20260815_GONE.jpg"
+    [[ "$output" != *"RAW 已不在"* ]] || fail "載入 RAW 不應清除輸出檔：$output"
+
+    # RAW 目錄沒有任何 RAW 時，輸出不清除輸出檔，也不輸出
+    case_index=$((case_index + 1))
+    make_project "$case_index"
+    rm -f "$base/$project/RAW/"*.ARW
+    output=$(PATH="$dir/bin:$PATH" /bin/bash "$dir/afterraw.sh" --ig --fb "$project" 2>&1) \
+        || fail "RAW 目錄沒有 RAW 時輸出應正常結束：$output"
+    expect_file "$base/$project/PSD/20260815_GONE.psd"
+    expect_file "$base/$project/IG/20260815_GONE.jpg"
+    expect_file "$base/$project/FB/20260815_GONE.jpg"
+    [[ "$output" = *"沒有找到 .ARW 或 .RAW 檔案"* ]] || fail "RAW 目錄沒有 RAW 時未說明：$output"
 }
 
 test_afterraw_denoise_target() {
@@ -1155,6 +1284,8 @@ test_dropbox_offline
 test_afterraw_redo_arguments
 test_afterraw_file_arguments
 test_afterraw_split_existing_psd
+test_afterraw_cleanup_outputs_without_raw
+test_afterraw_output_modes_cleanup
 test_afterraw_denoise_target
 test_organize_raw_by_date
 test_rename_raw

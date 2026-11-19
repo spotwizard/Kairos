@@ -416,89 +416,103 @@ raw_has_completed_sidecars() {
     [ -f "${base_name}.xmp" ] && [ -f "${base_name}.acr" ]
 }
 
-# 後置輸出的來源檔：根據 RAW 輸出時是找到的 RAW，根據 PSD 輸出時是找到的 PSD
-OUTPUT_SOURCE_FILES=()
-OUTPUT_SOURCE_LABEL="RAW"
+# 列出 RAW 目錄內現有的全部 .ARW／.RAW 主檔名（不受 --file、--date 影響），
+# 存進以換行分隔的 ALL_RAW_BASENAMES，數量存進 ALL_RAW_COUNT
+collect_all_raw_basenames() {
+    local raw_file
+    local raw_name
 
-source_output_basename_exists() {
-    local output_base="$1"
-    local source_file
-    local source_name
-    local source_base
+    ALL_RAW_BASENAMES=$'\n'
+    ALL_RAW_COUNT=0
+    while IFS= read -r -d '' raw_file; do
+        raw_name="${raw_file##*/}"
+        ALL_RAW_BASENAMES+="${raw_name%.*}"$'\n'
+        ALL_RAW_COUNT=$((ALL_RAW_COUNT + 1))
+    done < <(find "$RAW_DIR" -maxdepth 1 -type f \( -iname "*.arw" -o -iname "*.raw" \) -print0)
+}
 
-    for source_file in "${OUTPUT_SOURCE_FILES[@]}"; do
-        source_name=$(basename "$source_file")
-        source_base="${source_name%.*}"
-        if [ "$source_base" = "$output_base" ]; then
-            return 0
-        fi
-    done
+raw_basename_exists() {
+    case "$ALL_RAW_BASENAMES" in
+        *$'\n'"$1"$'\n'*) return 0 ;;
+    esac
 
     return 1
 }
 
-cleanup_orphan_output_files() {
+# 刪除一個輸出目錄內 RAW 已不在的輸出檔；file_type 為 psd 時檢查 .psd，否則檢查 .jpg／.jpeg
+cleanup_output_dir_without_raw() {
     local output_dir="$1"
     local label="$2"
     local file_type="$3"
     local output_file
     local output_name
-    local output_base
     local deleted_count=0
     local failed_count=0
-    local -a date_filter=()
-
-    if [ -n "$DATE_PREFIX" ]; then
-        date_filter=(-iname "${DATE_PREFIX}*")
-    fi
+    local -a name_filter
 
     if [ ! -d "$output_dir" ]; then
         return 0
     fi
 
-    echo "檢查 ${label} 無對應 ${OUTPUT_SOURCE_LABEL} 的輸出檔..."
-
     if [ "$file_type" = "psd" ]; then
-        while IFS= read -r -d '' output_file; do
-            output_name=$(basename "$output_file")
-            output_base="${output_name%.*}"
-
-            if source_output_basename_exists "$output_base"; then
-                continue
-            fi
-
-            if rm -f -- "$output_file"; then
-                echo "✓ 已刪除無對應 ${OUTPUT_SOURCE_LABEL} 的 ${label} 檔案：$output_name"
-                deleted_count=$((deleted_count + 1))
-            else
-                echo "✗ 無對應 ${OUTPUT_SOURCE_LABEL} 但刪除失敗：$output_name"
-                failed_count=$((failed_count + 1))
-            fi
-        done < <(find "$output_dir" -maxdepth 1 -type f "${date_filter[@]}" -iname "*.psd" -print0)
+        name_filter=(-iname "*.psd")
     else
-        while IFS= read -r -d '' output_file; do
-            output_name=$(basename "$output_file")
-            output_base="${output_name%.*}"
-
-            if source_output_basename_exists "$output_base"; then
-                continue
-            fi
-
-            if rm -f -- "$output_file"; then
-                echo "✓ 已刪除無對應 ${OUTPUT_SOURCE_LABEL} 的 ${label} 檔案：$output_name"
-                deleted_count=$((deleted_count + 1))
-            else
-                echo "✗ 無對應 ${OUTPUT_SOURCE_LABEL} 但刪除失敗：$output_name"
-                failed_count=$((failed_count + 1))
-            fi
-        done < <(find "$output_dir" -maxdepth 1 -type f "${date_filter[@]}" \( -iname "*.jpg" -o -iname "*.jpeg" \) -print0)
+        name_filter=("(" -iname "*.jpg" -o -iname "*.jpeg" ")")
     fi
 
+    while IFS= read -r -d '' output_file; do
+        output_name="${output_file##*/}"
+
+        if raw_basename_exists "${output_name%.*}"; then
+            continue
+        fi
+
+        if rm -f -- "$output_file"; then
+            echo "✓ 已刪除 RAW 已不在的 ${label} 檔案：$output_name"
+            deleted_count=$((deleted_count + 1))
+        else
+            echo "✗ RAW 已不在但刪除失敗（${label}）：$output_name"
+            failed_count=$((failed_count + 1))
+        fi
+    done < <(find "$output_dir" -maxdepth 1 -type f "${name_filter[@]}" -print0)
+
     if [ "$deleted_count" -eq 0 ] && [ "$failed_count" -eq 0 ]; then
-        echo "✓ ${label} 沒有需要清理的輸出檔"
+        echo "✓ ${label} 沒有 RAW 已不在的輸出檔"
     fi
 
     if [ "$failed_count" -gt 0 ]; then
+        return 1
+    fi
+
+    return 0
+}
+
+# 所有輸出模式（不論輸出哪一種成品、指定檔名、指定日期或全部）都以 RAW 目錄內現有的全部 RAW 為準，
+# 刪除 PSD、IG、FB 目錄內 RAW 已不在的 .psd、.jpg。
+# RAW 目錄內一個 RAW 都沒有時不刪除，避免 RAW 被搬走或尚未同步時清空全部成品。
+cleanup_outputs_without_raw() {
+    local cleanup_failed=false
+
+    collect_all_raw_basenames
+
+    echo ""
+    if [ "$ALL_RAW_COUNT" -eq 0 ]; then
+        echo "⊘ RAW 目錄內沒有任何 .ARW 或 .RAW 檔案，為避免清空全部成品，不清除 PSD、IG、FB 的輸出檔"
+        return 0
+    fi
+
+    echo "開始清除 RAW 已不在的輸出檔（PSD、IG、FB）..."
+    if ! cleanup_output_dir_without_raw "$TARGET_DIR/PSD" "PSD" "psd"; then
+        cleanup_failed=true
+    fi
+    if ! cleanup_output_dir_without_raw "$TARGET_DIR/IG" "IG" "jpg"; then
+        cleanup_failed=true
+    fi
+    if ! cleanup_output_dir_without_raw "$TARGET_DIR/FB" "FB" "jpg"; then
+        cleanup_failed=true
+    fi
+    if [ "$cleanup_failed" = true ]; then
+        echo "✗ RAW 已不在的輸出檔清除失敗"
         return 1
     fi
 
@@ -563,15 +577,11 @@ existing_psd_for_raw() {
 
 # 決定每個 RAW 的輸出來源：
 # 只輸出 IG／FB（REUSE_EXISTING_PSD）時，PSD 目錄已有同名 PSD 的放進 REUSE_PSD_FILES（根據現有 PSD 輸出），
-# 其餘放進 BUILD_RAW_FILES（之後從 RAW 建立 PSD）；沒有指定檔名時，PSD 目錄內沒有對應 RAW 的 PSD 也根據 PSD 輸出。
+# 其餘放進 BUILD_RAW_FILES（之後從 RAW 建立 PSD）。PSD 目錄內 RAW 已不在的 PSD 不輸出（輸出前已清除）。
 # 其他模式全部放進 BUILD_RAW_FILES。
 split_raw_by_existing_psd() {
     local raw_file
     local psd_file
-    local psd_name
-    local psd_base
-    local raw_name
-    local has_raw
 
     PSD_DIR="$TARGET_DIR/PSD"
     REUSE_PSD_FILES=()
@@ -591,27 +601,6 @@ split_raw_by_existing_psd() {
             echo "⊕ 沒有 PSD，先從 RAW 建立 PSD：$(basename "$raw_file")"
         fi
     done
-
-    if [ "$FILE_SPECIFIED" = true ] || [ ! -d "$PSD_DIR" ]; then
-        return 0
-    fi
-
-    while IFS= read -r -d '' psd_file; do
-        psd_name=$(basename "$psd_file")
-        psd_base="${psd_name%.*}"
-        has_raw=false
-        for raw_file in "${RAW_FILES_FOUND[@]}"; do
-            raw_name=$(basename "$raw_file")
-            if [ "${raw_name%.*}" = "$psd_base" ]; then
-                has_raw=true
-                break
-            fi
-        done
-        if [ "$has_raw" = false ]; then
-            REUSE_PSD_FILES+=("$psd_file")
-            echo "✓ 沒有對應 RAW 的 PSD，根據 PSD 輸出：$psd_name"
-        fi
-    done < <(find "$PSD_DIR" -maxdepth 1 -type f -iname "${DATE_PREFIX}*.psd" -print0)
 
     return 0
 }
@@ -637,33 +626,6 @@ prepare_output_dirs() {
     if [ "$DO_IG" = true ]; then
         mkdir -p "$IG_DIR" || return 1
         echo "IG 輸出資料夾：$IG_DIR"
-    fi
-
-    return 0
-}
-
-# 指定檔名時，其他檔案的輸出檔不在處理範圍內，不做孤兒輸出清理
-cleanup_orphan_outputs() {
-    local cleanup_failed=false
-
-    if [ "$FILE_SPECIFIED" = true ]; then
-        return 0
-    fi
-
-    echo ""
-    echo "開始清理無對應 ${OUTPUT_SOURCE_LABEL} 的輸出檔..."
-    if [ "$DO_MAKE_PSD" = true ] && ! cleanup_orphan_output_files "$PSD_DIR" "PSD" "psd"; then
-        cleanup_failed=true
-    fi
-    if [ "$DO_FB" = true ] && ! cleanup_orphan_output_files "$FB_DIR" "FB" "jpg"; then
-        cleanup_failed=true
-    fi
-    if [ "$DO_IG" = true ] && ! cleanup_orphan_output_files "$IG_DIR" "IG" "jpg"; then
-        cleanup_failed=true
-    fi
-    if [ "$cleanup_failed" = true ]; then
-        echo "✗ 無對應 ${OUTPUT_SOURCE_LABEL} 的輸出檔清理失敗"
-        return 1
     fi
 
     return 0
@@ -2163,10 +2125,16 @@ else
     done < <(find "$RAW_DIR" -maxdepth 1 -type f -iname "${DATE_PREFIX}*.raw" -print0)
 fi
 
+# 輸出成品前，先清除 RAW 已不在的 PSD、IG、FB 輸出檔
+if [ "$DO_PRE" = false ] && [ "$DO_LOAD_RAW" = false ]; then
+    cleanup_outputs_without_raw || exit 1
+    echo ""
+fi
+
 split_raw_by_existing_psd
 
-# 檢查是否有找到檔案（只輸出 IG／FB 時，沒有 RAW 但有 PSD 也照常輸出）
-if [ ${#RAW_FILES_FOUND[@]} -eq 0 ] && [ ${#REUSE_PSD_FILES[@]} -eq 0 ]; then
+# 檢查是否有找到檔案
+if [ ${#RAW_FILES_FOUND[@]} -eq 0 ]; then
     if [ -n "$DATE_PREFIX" ]; then
         echo "沒有找到檔名以 ${DATE_PREFIX} 開頭的 .ARW 或 .RAW 檔案"
     else
@@ -2364,16 +2332,7 @@ if [ ${#FILES_TO_OPEN[@]} -gt 0 ]; then
     fi
 fi
 
-# 清理孤兒輸出檔時，只輸出 IG／FB 的 JPG 有對應的 RAW 或 PSD 就保留
-OUTPUT_SOURCE_FILES=("${RAW_FILES_FOUND[@]}" "${REUSE_PSD_FILES[@]}")
-if [ "$REUSE_EXISTING_PSD" = true ]; then
-    OUTPUT_SOURCE_LABEL="RAW 或 PSD"
-else
-    OUTPUT_SOURCE_LABEL="RAW"
-fi
-
 prepare_output_dirs || exit 1
-cleanup_orphan_outputs || exit 1
 
 # 儲存 RAW 檔案和對應的 PSD 檔案配對；根據現有 PSD 輸出時 RAW 為空字串
 JOB_PSD_FILES=()
