@@ -96,6 +96,12 @@ run_worker() {
 
 photo_projects() {
     local project
+    # 讀取修改時間：macOS 的 stat 用 -f，其他系統（GNU stat）用 -c
+    local stat_args=(-f '%m %N')
+
+    if ! stat -f '%m' / > /dev/null 2>&1; then
+        stat_args=(-c '%Y %n')
+    fi
 
     # 整個攝影目錄只搜尋一次，再依專案取照片的最新修改時間；
     # 以 D 開頭的列是專案目錄本身，讓沒有照片的專案也會列出（排在最後）
@@ -109,7 +115,7 @@ photo_projects() {
             -iname '*.orf' -o -iname '*.raf' -o -iname '*.rw2' -o \
             -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.tif' -o \
             -iname '*.tiff' -o -iname '*.png' -o -iname '*.heic' \
-            \) -exec stat -f '%m %N' {} +
+            \) -exec stat "${stat_args[@]}" {} +
     } | KAIROS_PHOTO_ROOT_PREFIX="$PHOTO_ROOT/" awk '
         BEGIN {
             root = ENVIRON["KAIROS_PHOTO_ROOT_PREFIX"]
