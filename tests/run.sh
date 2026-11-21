@@ -1181,6 +1181,12 @@ non_interactive=false
 while [ "$#" -gt 0 ]; do
     case "$1" in
         -p) shift 2 ;;
+        # sudo -S：從標準輸入讀密碼，與 MOCK_SUDO_PASSWORD 相同才算正確
+        -S)
+            IFS= read -r password || exit 1
+            [ "$password" = "${MOCK_SUDO_PASSWORD:-secret}" ] || exit 1
+            shift
+            ;;
         -v)
             [ "${MOCK_SUDO_FAIL:-0}" = "1" ] && exit 1
             # sudo -n -v：沒有剛輸入過的密碼時失敗，代表接下來會詢問密碼
@@ -1208,11 +1214,38 @@ MOCK
 
 printf 'ascii\n' >> "$MOCK_ASCII_LOG"
 MOCK
-    chmod +x "$mock_bin/sudo" "$mock_bin/pmset" "$mock_bin/ascii-input"
+    # 鑰匙圈：密碼存在 MOCK_KEYCHAIN 檔案中，檔案不存在代表鑰匙圈沒有這個項目
+    cat > "$mock_bin/security" <<'MOCK'
+#!/usr/bin/env bash
 
+command=$1
+shift
+case "$command" in
+    find-generic-password)
+        [ -f "$MOCK_KEYCHAIN" ] || exit 44
+        cat "$MOCK_KEYCHAIN"
+        printf '\n'
+        ;;
+    add-generic-password)
+        while [ "$#" -gt 0 ]; do
+            case "$1" in
+                -U) shift ;;
+                -w) printf '%s' "$2" > "$MOCK_KEYCHAIN"; shift 2 ;;
+                *) shift 2 ;;
+            esac
+        done
+        ;;
+    delete-generic-password) rm -f "$MOCK_KEYCHAIN" ;;
+    *) exit 2 ;;
+esac
+MOCK
+    chmod +x "$mock_bin/sudo" "$mock_bin/pmset" "$mock_bin/ascii-input" "$mock_bin/security"
+
+    # 標準輸入為使用者輸入的密碼
     run_keep_awake() {
         MOCK_PMSET_STATE="$dir/state" KAIROS_SUDO_BIN="$mock_bin/sudo" KAIROS_PMSET_BIN="$mock_bin/pmset" \
             KAIROS_ASCII_INPUT_SCRIPT="$mock_bin/ascii-input" MOCK_ASCII_LOG="$dir/ascii.log" \
+            KAIROS_SECURITY_BIN="$mock_bin/security" MOCK_KEYCHAIN="$dir/keychain" \
             KAIROS_CAFFEINATE_BIN="$mock_bin/missing-caffeinate" KAIROS_KEEP_AWAKE_WAIT_SECONDS=3 \
             /bin/bash "$ROOT/keep_awake.sh" "$@" 2>&1
     }
@@ -1220,29 +1253,71 @@ MOCK
     # 執行期間關閉睡眠，結束後恢復，並傳回指令的結束狀態
     printf '0' > "$dir/state"
     : > "$dir/ascii.log"
+    rm -f "$dir/keychain"
     status=0
-    output=$(run_keep_awake /bin/bash -c 'printf "during=%s\n" "$(cat "$1")"; exit 3' child "$dir/state") || status=$?
+    output=$(printf 'secret\n' | run_keep_awake /bin/bash -c 'printf "during=%s\n" "$(cat "$1")"; exit 3' child "$dir/state") \
+        || status=$?
     [ "$status" -eq 3 ] || fail "防止睡眠程式應傳回指令的結束狀態（實際 ${status}）：$output"
     [[ "$output" = *"during=1"* ]] || fail "執行期間應關閉睡眠：$output"
     [[ "$output" = *"已暫時關閉睡眠"* ]] || fail "未提示已關閉睡眠：$output"
     [ "$(cat "$dir/state")" = 0 ] || fail "結束後應恢復睡眠設定"
     [[ "$output" = *"已恢復原本的睡眠設定"* ]] || fail "未提示已恢復睡眠設定：$output"
     [ "$(cat "$dir/ascii.log")" = "ascii" ] || fail "要求輸入密碼前應切換成英數輸入法"
+    [ "$(cat "$dir/keychain" 2> /dev/null)" = "secret" ] || fail "第一次輸入正確密碼後應存入鑰匙圈"
+    [[ "$output" = *"已將密碼存入鑰匙圈"* ]] || fail "未提示已將密碼存入鑰匙圈：$output"
+
+    # 鑰匙圈已有正確密碼時不再詢問、不切換輸入法
+    printf '0' > "$dir/state"
+    : > "$dir/ascii.log"
+    output=$(run_keep_awake /bin/bash -c 'printf "during=%s\n" "$(cat "$1")"' child "$dir/state" < /dev/null) \
+        || fail "使用鑰匙圈中的密碼時執行失敗：$output"
+    [[ "$output" = *"during=1"* ]] || fail "使用鑰匙圈中的密碼時應關閉睡眠：$output"
+    [[ "$output" = *"已使用鑰匙圈中的密碼"* ]] || fail "未提示使用鑰匙圈中的密碼：$output"
+    [[ "$output" != *"需要輸入電腦的登入密碼"* ]] || fail "鑰匙圈已有密碼時不應要求輸入：$output"
+    [ ! -s "$dir/ascii.log" ] || fail "鑰匙圈已有密碼時不應切換輸入法"
+
+    # 鑰匙圈中的密碼不正確（已更改登入密碼）時刪除，重新詢問並存入新密碼
+    printf '0' > "$dir/state"
+    : > "$dir/ascii.log"
+    printf 'old' > "$dir/keychain"
+    output=$(printf 'secret\n' | run_keep_awake /bin/true) || fail "鑰匙圈密碼不正確時執行失敗：$output"
+    [[ "$output" = *"鑰匙圈中的密碼已不正確"* ]] || fail "未提示鑰匙圈中的密碼不正確：$output"
+    [[ "$output" = *"已暫時關閉睡眠"* ]] || fail "重新輸入正確密碼後應關閉睡眠：$output"
+    [ "$(cat "$dir/keychain" 2> /dev/null)" = "secret" ] || fail "重新輸入正確密碼後應更新鑰匙圈"
+    [ "$(cat "$dir/ascii.log")" = "ascii" ] || fail "重新詢問密碼前應切換成英數輸入法"
+
+    # 輸入錯誤密碼三次後放棄，不存入鑰匙圈，仍執行指令
+    printf '0' > "$dir/state"
+    rm -f "$dir/keychain"
+    output=$(printf 'wrong1\nwrong2\nwrong3\nsecret\n' | run_keep_awake /bin/bash -c 'echo ran') \
+        || fail "密碼錯誤時仍應執行指令：$output"
+    [[ "$output" = *"密碼不正確，請再試一次"* ]] || fail "密碼錯誤時應提示再試一次：$output"
+    [[ "$output" = *"請不要蓋上螢幕"* ]] || fail "密碼錯誤三次後應提示不要蓋上螢幕：$output"
+    [[ "$output" = *"ran"* ]] || fail "密碼錯誤時沒有執行指令：$output"
+    [ ! -e "$dir/keychain" ] || fail "密碼錯誤時不應存入鑰匙圈"
+    [ "$(cat "$dir/state")" = 0 ] || fail "密碼錯誤時不應改動睡眠設定"
+
+    # 沒有輸入密碼直接按 Enter 時不再詢問
+    output=$(printf '\nsecret\n' | run_keep_awake /bin/true) || fail "沒有輸入密碼時執行失敗：$output"
+    [[ "$output" = *"請不要蓋上螢幕"* ]] || fail "沒有輸入密碼時應提示不要蓋上螢幕：$output"
+    [ ! -e "$dir/keychain" ] || fail "沒有輸入密碼時不應存入鑰匙圈"
 
     # 剛輸入過密碼、sudo 不會詢問時，不切換輸入法
     printf '0' > "$dir/state"
     : > "$dir/ascii.log"
-    output=$(MOCK_SUDO_CACHED=1 run_keep_awake /bin/true) || fail "剛輸入過密碼時執行失敗：$output"
+    output=$(MOCK_SUDO_CACHED=1 run_keep_awake /bin/true < /dev/null) || fail "剛輸入過密碼時執行失敗：$output"
     [ ! -s "$dir/ascii.log" ] || fail "sudo 不會詢問密碼時不應切換輸入法"
 
     # 原本就關閉睡眠時，結束後維持關閉
     printf '1' > "$dir/state"
-    output=$(run_keep_awake /bin/true) || fail "原本關閉睡眠時執行失敗：$output"
+    output=$(printf 'secret\n' | run_keep_awake /bin/true) || fail "原本關閉睡眠時執行失敗：$output"
     [ "$(cat "$dir/state")" = 1 ] || fail "原本已關閉睡眠時，結束後不應改回會睡眠"
 
     # 取不到管理者權限時仍執行指令，並提示不要蓋上螢幕
     printf '0' > "$dir/state"
-    output=$(MOCK_SUDO_FAIL=1 run_keep_awake /bin/bash -c 'echo ran') || fail "取不到權限時仍應執行指令：$output"
+    rm -f "$dir/keychain"
+    output=$(printf 'secret\nsecret\nsecret\n' | MOCK_SUDO_FAIL=1 run_keep_awake /bin/bash -c 'echo ran') \
+        || fail "取不到權限時仍應執行指令：$output"
     [[ "$output" = *"ran"* ]] || fail "取不到權限時沒有執行指令：$output"
     [[ "$output" = *"請不要蓋上螢幕"* ]] || fail "取不到權限時應提示不要蓋上螢幕：$output"
     [ "$(cat "$dir/state")" = 0 ] || fail "取不到權限時不應改動睡眠設定"
@@ -1252,7 +1327,8 @@ MOCK
     MOCK_PMSET_STATE="$dir/state" KAIROS_SUDO_BIN="$mock_bin/sudo" KAIROS_PMSET_BIN="$mock_bin/pmset" \
         KAIROS_CAFFEINATE_BIN="$mock_bin/missing-caffeinate" \
         KAIROS_ASCII_INPUT_SCRIPT="$mock_bin/ascii-input" MOCK_ASCII_LOG="$dir/ascii.log" \
-        /bin/bash "$ROOT/keep_awake.sh" /bin/sleep 30 > /dev/null 2>&1 &
+        KAIROS_SECURITY_BIN="$mock_bin/security" MOCK_KEYCHAIN="$dir/keychain" \
+        /bin/bash "$ROOT/keep_awake.sh" /bin/sleep 30 <<< secret > /dev/null 2>&1 &
     wrapper_pid=$!
     waited=0
     while [ "$(cat "$dir/state")" != 1 ]; do

@@ -18,6 +18,10 @@ CAFFEINATE_BIN="${KAIROS_CAFFEINATE_BIN:-/usr/bin/caffeinate}"
 GUARD_WAIT_SECONDS="${KAIROS_KEEP_AWAKE_WAIT_SECONDS:-5}"
 # 要求輸入密碼前先切換成英數輸入法
 ASCII_INPUT_SCRIPT="${KAIROS_ASCII_INPUT_SCRIPT:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/ascii_input.sh}"
+# 第一次輸入正確的登入密碼後存入鑰匙圈，之後直接從鑰匙圈取用
+SECURITY_BIN="${KAIROS_SECURITY_BIN:-/usr/bin/security}"
+KEYCHAIN_SERVICE="${KAIROS_KEYCHAIN_SERVICE:-kairos-sudo}"
+KEYCHAIN_ACCOUNT="${USER:-$(id -un)}"
 
 if [ "$#" -eq 0 ]; then
     echo "用法：$0 指令 [參數...]" >&2
@@ -56,8 +60,14 @@ GUARD_PID=""
 GUARD_ACTIVE=false
 SLEEP_WAS_DISABLED=false
 TMP_DIR=""
+READING_PASSWORD=false
 
 cleanup() {
+    # 輸入密碼時被中斷，恢復終端機的字元回顯
+    if [ "$READING_PASSWORD" = true ] && [ -t 0 ]; then
+        stty echo 2> /dev/null
+        echo "" >&2
+    fi
     if [ "$GUARD_ACTIVE" = true ]; then
         GUARD_ACTIVE=false
         exec 3>&-
@@ -78,6 +88,77 @@ trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
+keychain_available() {
+    command -v "$SECURITY_BIN" > /dev/null 2>&1
+}
+
+# 以密碼取得 sudo 權限；密碼經由管線交給 sudo，不出現在指令參數中
+sudo_with_password() {
+    printf '%s\n' "$1" | "$SUDO_BIN" -S -p "" -v > /dev/null 2>&1
+}
+
+save_password() {
+    keychain_available || return 0
+    if "$SECURITY_BIN" add-generic-password -U -a "$KEYCHAIN_ACCOUNT" -s "$KEYCHAIN_SERVICE" \
+        -l "Kairos 電腦登入密碼" -w "$1" > /dev/null 2>&1; then
+        echo "✓ 已將密碼存入鑰匙圈，之後不必再輸入"
+    else
+        echo "⚠ 未能將密碼存入鑰匙圈，下次仍需輸入密碼"
+    fi
+}
+
+# 取得 sudo 權限：剛輸入過密碼 → 鑰匙圈中的密碼 → 請使用者輸入（最多三次，正確時存入鑰匙圈）
+authenticate() {
+    local password=""
+    local attempt
+
+    # 幾分鐘內剛輸入過密碼時 sudo 不會詢問
+    if "$SUDO_BIN" -n -v > /dev/null 2>&1; then
+        return 0
+    fi
+
+    if keychain_available; then
+        password=$("$SECURITY_BIN" find-generic-password -a "$KEYCHAIN_ACCOUNT" -s "$KEYCHAIN_SERVICE" -w 2> /dev/null) \
+            || password=""
+        if [ -n "$password" ]; then
+            if sudo_with_password "$password"; then
+                echo "✓ 已使用鑰匙圈中的密碼"
+                return 0
+            fi
+            "$SECURITY_BIN" delete-generic-password -a "$KEYCHAIN_ACCOUNT" -s "$KEYCHAIN_SERVICE" > /dev/null 2>&1
+            echo "⚠ 鑰匙圈中的密碼已不正確（可能已更改電腦登入密碼），已將它刪除，請重新輸入"
+        fi
+    fi
+
+    echo "需要輸入電腦的登入密碼，暫時關閉睡眠，讓 Mac 蓋上螢幕後仍繼續執行（程序結束後自動恢復）"
+    /bin/bash "$ASCII_INPUT_SCRIPT" > /dev/null 2>&1 || true
+    for attempt in 1 2 3; do
+        password=""
+        READING_PASSWORD=true
+        if ! IFS= read -r -s -p "電腦登入密碼：" password; then
+            READING_PASSWORD=false
+            [ -t 0 ] && echo "" >&2
+            return 1
+        fi
+        READING_PASSWORD=false
+        [ -t 0 ] && echo "" >&2
+        # 沒有輸入密碼直接按 Enter 時不再詢問
+        if [ -z "$password" ]; then
+            return 1
+        fi
+        if sudo_with_password "$password"; then
+            save_password "$password"
+            return 0
+        fi
+        if [ "$attempt" -lt 3 ]; then
+            echo "密碼不正確，請再試一次"
+        else
+            echo "密碼不正確"
+        fi
+    done
+    return 1
+}
+
 start_guard() {
     local waited=0
 
@@ -85,12 +166,7 @@ start_guard() {
         SLEEP_WAS_DISABLED=true
     fi
 
-    echo "需要輸入電腦的登入密碼，暫時關閉睡眠，讓 Mac 蓋上螢幕後仍繼續執行（程序結束後自動恢復）"
-    # 幾分鐘內剛輸入過密碼時 sudo 不會詢問，不必切換輸入法
-    if ! "$SUDO_BIN" -n -v > /dev/null 2>&1; then
-        /bin/bash "$ASCII_INPUT_SCRIPT" > /dev/null 2>&1 || true
-    fi
-    if ! "$SUDO_BIN" -p "電腦登入密碼：" -v; then
+    if ! authenticate; then
         return 1
     fi
 
