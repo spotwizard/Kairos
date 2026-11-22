@@ -199,7 +199,7 @@ check_free_space() {
     local list_file size original_date create_date path capture_date
     local required_bytes=0
     local pending_count=0
-    local available_kb available_bytes
+    local available_kb available_bytes shortage
 
     list_file=$(mktemp "${TMPDIR:-/tmp}/kairos_space.XXXXXX") || return 0
     printf '正在計算記憶卡 RAW 檔案所需的硬碟空間...\n'
@@ -248,15 +248,16 @@ check_free_space() {
     available_bytes=$((available_kb * 1024))
 
     if (( required_bytes > available_bytes )); then
-        printf '硬碟空間不足，未複製任何檔案。\n' >&2
-        printf '  需要複製：%d 個 RAW 檔案，共 %s\n' "$pending_count" "$(format_size "$required_bytes" up)" >&2
-        printf '  硬碟可用：%s（%s）\n' "$(format_size "$available_bytes")" "$TARGET_ROOT" >&2
-        printf '  還差：%s\n' "$(format_size "$((required_bytes - available_bytes))" up)" >&2
-        printf '請先清出空間再重新傳輸。所有來源檔案均已保留。\n' >&2
+        shortage=$(format_size "$((required_bytes - available_bytes))" up)
+        printf '硬碟空間不足，尚未複製任何檔案。\n' >&2
+        printf '  記憶卡上待複製的 RAW 檔案：%d 個，共 %s\n' "$pending_count" "$(format_size "$required_bytes" up)" >&2
+        printf '  硬碟目前的可用空間：%s（%s）\n' "$(format_size "$available_bytes")" "$TARGET_ROOT" >&2
+        printf '  不足的空間：%s\n' "$shortage" >&2
+        printf '請先在硬碟清出至少 %s 的空間，再重新傳輸。記憶卡上的檔案均未更動。\n' "$shortage" >&2
         return 1
     fi
 
-    printf '硬碟空間足夠：需要複製 %d 個 RAW 檔案，共 %s，硬碟可用 %s。\n' \
+    printf '硬碟空間足夠：記憶卡上待複製的 RAW 檔案 %d 個，共 %s；硬碟目前的可用空間 %s。\n' \
         "$pending_count" "$(format_size "$required_bytes" up)" "$(format_size "$available_bytes")"
     return 0
 }
