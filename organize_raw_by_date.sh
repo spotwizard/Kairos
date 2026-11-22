@@ -182,6 +182,87 @@ eject_card() {
     return 1
 }
 
+# 位元組數轉成容易閱讀的單位（與 Finder 相同，1 GB = 1000 MB）；第二個參數為 up 時無條件進位
+format_size() {
+    awk -v bytes="$1" -v mode="${2:-}" 'BEGIN {
+        if (bytes >= 1000000000) { value = bytes / 1000000000; unit = "GB"; scale = 100 }
+        else { value = bytes / 1000000; unit = "MB"; scale = 10 }
+        scaled = value * scale
+        if (mode == "up") { rounded = int(scaled); if (rounded < scaled) rounded += 1 }
+        else { rounded = int(scaled + 0.5) }
+        printf (scale == 100 ? "%.2f %s" : "%.1f %s"), rounded / scale, unit
+    }'
+}
+
+# 複製前先確認目的地硬碟放得下尚未複製的 RAW，空間不足時回報還差多少並回傳 1
+check_free_space() {
+    local list_file size original_date create_date path capture_date
+    local required_bytes=0
+    local pending_count=0
+    local available_kb available_bytes
+
+    list_file=$(mktemp "${TMPDIR:-/tmp}/kairos_space.XXXXXX") || return 0
+    printf '正在計算記憶卡 RAW 檔案所需的硬碟空間...\n'
+    # 個別檔案讀取失敗時 ExifTool 會回傳非 0，這裡只採用成功列出的檔案，讀取錯誤留給複製步驟回報
+    exiftool -r -f -m -q "${EXIFTOOL_EXTENSIONS[@]}" \
+        -d '%Y%m%d' \
+        -p '$FileSize#	$DateTimeOriginal	$CreateDate	$Directory/$FileName' \
+        "$SOURCE_DIR" > "$list_file" 2>/dev/null
+
+    while IFS=$'\t' read -r size original_date create_date path; do
+        case "$size" in
+            ''|*[!0-9]*) continue ;;
+        esac
+        capture_date="$original_date"
+        if [[ "$capture_date" == "-" ]]; then
+            capture_date="$create_date"
+        fi
+        # 沒有拍攝日期的檔案不會被複製，已存在於目的地的檔案也會略過
+        case "$capture_date" in
+            [0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]) ;;
+            *) continue ;;
+        esac
+        if [[ -e "$TARGET_ROOT/$capture_date/$(basename -- "$path")" ]]; then
+            continue
+        fi
+        required_bytes=$((required_bytes + size))
+        pending_count=$((pending_count + 1))
+    done < "$list_file"
+    rm -f -- "$list_file"
+
+    if (( pending_count == 0 )); then
+        printf '沒有需要複製的新 RAW 檔案，不需要額外的硬碟空間。\n'
+        return 0
+    fi
+
+    # 可用空間取「容量百分比」欄位的前一欄，磁碟名稱含空白時也不會取錯
+    available_kb=$(df -Pk "$TARGET_ROOT" 2>/dev/null | awk 'NR > 1 {
+        for (i = 2; i <= NF; i++) if ($i ~ /^[0-9]+%$/) { print $(i - 1); exit }
+    }')
+    case "$available_kb" in
+        ''|*[!0-9]*)
+            printf '⚠ 無法取得硬碟可用空間，略過空間檢查：%s\n' "$TARGET_ROOT" >&2
+            return 0
+            ;;
+    esac
+    available_bytes=$((available_kb * 1024))
+
+    if (( required_bytes > available_bytes )); then
+        printf '硬碟空間不足，未複製任何檔案。\n' >&2
+        printf '  需要複製：%d 個 RAW 檔案，共 %s\n' "$pending_count" "$(format_size "$required_bytes" up)" >&2
+        printf '  硬碟可用：%s（%s）\n' "$(format_size "$available_bytes")" "$TARGET_ROOT" >&2
+        printf '  還差：%s\n' "$(format_size "$((required_bytes - available_bytes))" up)" >&2
+        printf '請先清出空間再重新傳輸。所有來源檔案均已保留。\n' >&2
+        return 1
+    fi
+
+    printf '硬碟空間足夠：需要複製 %d 個 RAW 檔案，共 %s，硬碟可用 %s。\n' \
+        "$pending_count" "$(format_size "$required_bytes" up)" "$(format_size "$available_bytes")"
+    return 0
+}
+
+check_free_space || exit 1
+
 status=0
 move_by_date DateTimeOriginal 'defined $DateTimeOriginal'
 result=$?

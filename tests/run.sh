@@ -77,6 +77,24 @@ for argument in "$@"; do
     fi
 done
 
+# 空間檢查用的清單：大小、DateTimeOriginal、CreateDate、路徑
+for argument in "$@"; do
+    if [ "$argument" = "-p" ]; then
+        while IFS= read -r -d '' source; do
+            size=$(wc -c < "$source" | tr -d ' ')
+            if [ -n "${MOCK_FILE_SIZE:-}" ]; then
+                size="$MOCK_FILE_SIZE"
+            fi
+            case "${source##*/}" in
+                ORIGINAL.*) printf '%s\t20260815\t-\t%s\n' "$size" "$source" ;;
+                FALLBACK.*) printf '%s\t-\t20260816\t%s\n' "$size" "$source" ;;
+                *) printf '%s\t-\t-\t%s\n' "$size" "$source" ;;
+            esac
+        done < <(find "${!#}" -type f -print0)
+        exit 0
+    fi
+done
+
 if [ "${MOCK_SKIP_COPY:-0}" = "1" ]; then
     exit 2
 fi
@@ -141,11 +159,42 @@ MOCK
     export MOCK_DISKUTIL_LOG="$test_dir/diskutil.log"
     : > "$MOCK_DISKUTIL_LOG"
 
+    cat > "$mock_bin/df" <<'MOCK'
+#!/usr/bin/env bash
+
+printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\n'
+printf '/dev/disk3s5 488245288 100000000 %s 50%% /System/Volumes/Data\n' "${MOCK_DF_AVAILABLE_KB:-300000000}"
+MOCK
+    chmod +x "$mock_bin/df"
+
     printf 'ORIGINAL' > "$source_dir/相機 A/ORIGINAL.ArW"
     printf 'FALLBACK' > "$source_dir/相機 A/FALLBACK.CR2"
+
+    # 硬碟空間不足時不複製、不退出記憶卡，並回報還差多少（2 個各 3 GB 的檔案，可用 4 GB）
+    if output=$(MOCK_FILE_SIZE=3000000000 MOCK_DF_AVAILABLE_KB=3906250 PATH="$mock_bin:$PATH" "$test_script" 2>&1); then
+        fail "硬碟空間不足時應該失敗：$output"
+    fi
+    [[ "$output" = *"硬碟空間不足，未複製任何檔案"* ]] || fail "未回報硬碟空間不足：$output"
+    [[ "$output" = *"需要複製：2 個 RAW 檔案，共 6.00 GB"* ]] || fail "未回報需要的空間：$output"
+    [[ "$output" = *"硬碟可用：4.00 GB"* ]] || fail "未回報可用空間：$output"
+    [[ "$output" = *"還差：2.00 GB"* ]] || fail "未回報還差多少空間：$output"
+    [ ! -e "$target_root/20260815" ] || fail "硬碟空間不足時不應複製檔案"
+    [ ! -s "$MOCK_DISKUTIL_LOG" ] || fail "硬碟空間不足時不應退出記憶卡"
+
+    # 不足 1 GB 的差額以 MB 表示，並無條件進位
+    output=$(MOCK_FILE_SIZE=2000000000 MOCK_DF_AVAILABLE_KB=3906250 PATH="$mock_bin:$PATH" "$test_script" 2>&1)
+    [[ "$output" = *"硬碟空間足夠：需要複製 2 個 RAW 檔案，共 4.00 GB，硬碟可用 4.00 GB"* ]] || fail "空間剛好足夠時應繼續複製：$output"
+    rm -rf "$target_root/20260815" "$target_root/20260816"
+    : > "$MOCK_DISKUTIL_LOG"
+    if output=$(MOCK_FILE_SIZE=2000000001 MOCK_DF_AVAILABLE_KB=3906250 PATH="$mock_bin:$PATH" "$test_script" 2>&1); then
+        fail "只差幾個位元組時也應該失敗：$output"
+    fi
+    [[ "$output" = *"還差：0.1 MB"* ]] || fail "差額應無條件進位：$output"
+
     if ! output=$(PATH="$mock_bin:$PATH" "$test_script" 2>&1); then
         fail "RAW 日期分類預期成功：$output"
     fi
+    [[ "$output" = *"硬碟空間足夠：需要複製 2 個 RAW 檔案"* ]] || fail "未顯示空間檢查結果：$output"
     expect_file "$target_root/20260815/ORIGINAL.ArW"
     expect_file "$target_root/20260816/FALLBACK.CR2"
     [[ "$output" = *"驗證進度："*"100% (2/2)"* ]] || fail "驗證進度條未完成到 100%：$output"
@@ -167,6 +216,12 @@ MOCK
     fi
     [[ "$output" = *"已存在，略過複製並交由內容驗證：2 個 RAW 檔案"* ]] || fail "未摘要已存在的 RAW：$output"
     [[ "$output" != *"already exists"* ]] || fail "不應把已存在且相同的 RAW 顯示成 Error"
+
+    # 檔案都已在目的地時不需要空間，硬碟全滿也不應擋下
+    if ! output=$(MOCK_DF_AVAILABLE_KB=0 PATH="$mock_bin:$PATH" "$test_script" 2>&1); then
+        fail "沒有新檔案時硬碟全滿也應通過：$output"
+    fi
+    [[ "$output" = *"沒有需要複製的新 RAW 檔案"* ]] || fail "未說明不需要額外空間：$output"
     : > "$MOCK_DISKUTIL_LOG"
 
     if output=$(MOCK_OTHER_ERROR=1 PATH="$mock_bin:$PATH" "$test_script" 2>&1); then
