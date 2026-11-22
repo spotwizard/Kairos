@@ -190,19 +190,17 @@ format_size() {
         scaled = value * scale
         if (mode == "up") { rounded = int(scaled); if (rounded < scaled) rounded += 1 }
         else { rounded = int(scaled + 0.5) }
-        printf (scale == 100 ? "%.2f %s" : "%.1f %s"), rounded / scale, unit
+        printf (scale == 100 ? "%.2f%s" : "%.1f%s"), rounded / scale, unit
     }'
 }
 
-# 複製前先確認目的地硬碟放得下尚未複製的 RAW，空間不足時回報還差多少並回傳 1
+# 複製前先確認目的地硬碟放得下尚未複製的 RAW；空間足夠時不顯示訊息，不足時回報尚需多少並回傳 1
 check_free_space() {
     local list_file size original_date create_date path capture_date
     local required_bytes=0
-    local pending_count=0
-    local available_kb available_bytes shortage
+    local available_kb available_bytes
 
     list_file=$(mktemp "${TMPDIR:-/tmp}/kairos_space.XXXXXX") || return 0
-    printf '正在計算記憶卡 RAW 檔案所需的硬碟空間...\n'
     # 個別檔案讀取失敗時 ExifTool 會回傳非 0，這裡只採用成功列出的檔案，讀取錯誤留給複製步驟回報
     exiftool -r -f -m -q "${EXIFTOOL_EXTENSIONS[@]}" \
         -d '%Y%m%d' \
@@ -226,12 +224,10 @@ check_free_space() {
             continue
         fi
         required_bytes=$((required_bytes + size))
-        pending_count=$((pending_count + 1))
     done < "$list_file"
     rm -f -- "$list_file"
 
-    if (( pending_count == 0 )); then
-        printf '沒有需要複製的新 RAW 檔案，不需要額外的硬碟空間。\n'
+    if (( required_bytes == 0 )); then
         return 0
     fi
 
@@ -248,17 +244,11 @@ check_free_space() {
     available_bytes=$((available_kb * 1024))
 
     if (( required_bytes > available_bytes )); then
-        shortage=$(format_size "$((required_bytes - available_bytes))" up)
-        printf '硬碟空間不足，尚未複製任何檔案。\n' >&2
-        printf '  記憶卡上待複製的 RAW 檔案：%d 個，共 %s\n' "$pending_count" "$(format_size "$required_bytes" up)" >&2
-        printf '  硬碟目前的可用空間：%s（%s）\n' "$(format_size "$available_bytes")" "$TARGET_ROOT" >&2
-        printf '  不足的空間：%s\n' "$shortage" >&2
-        printf '請先在硬碟清出至少 %s 的空間，再重新傳輸。記憶卡上的檔案均未更動。\n' "$shortage" >&2
+        printf '目前無法複製檔案，尚需%s硬碟空間\n' \
+            "$(format_size "$((required_bytes - available_bytes))" up)" >&2
         return 1
     fi
 
-    printf '硬碟空間足夠：記憶卡上待複製的 RAW 檔案 %d 個，共 %s；硬碟目前的可用空間 %s。\n' \
-        "$pending_count" "$(format_size "$required_bytes" up)" "$(format_size "$available_bytes")"
     return 0
 }
 

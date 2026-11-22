@@ -174,28 +174,26 @@ MOCK
     if output=$(MOCK_FILE_SIZE=3000000000 MOCK_DF_AVAILABLE_KB=3906250 PATH="$mock_bin:$PATH" "$test_script" 2>&1); then
         fail "硬碟空間不足時應該失敗：$output"
     fi
-    [[ "$output" = *"硬碟空間不足，尚未複製任何檔案"* ]] || fail "未回報硬碟空間不足：$output"
-    [[ "$output" = *"記憶卡上待複製的 RAW 檔案：2 個，共 6.00 GB"* ]] || fail "未回報需要的空間：$output"
-    [[ "$output" = *"硬碟目前的可用空間：4.00 GB"* ]] || fail "未回報可用空間：$output"
-    [[ "$output" = *"不足的空間：2.00 GB"* ]] || fail "未回報還差多少空間：$output"
-    [[ "$output" = *"請先在硬碟清出至少 2.00 GB 的空間，再重新傳輸"* ]] || fail "未說明要清出多少空間：$output"
+    [[ "$output" = *"目前無法複製檔案，尚需2.00GB硬碟空間"* ]] || fail "未回報尚需多少空間：$output"
     [ ! -e "$target_root/20260815" ] || fail "硬碟空間不足時不應複製檔案"
     [ ! -s "$MOCK_DISKUTIL_LOG" ] || fail "硬碟空間不足時不應退出記憶卡"
 
+    # 空間剛好足夠時直接開始複製，不顯示空間訊息
+    if ! output=$(MOCK_FILE_SIZE=2000000000 MOCK_DF_AVAILABLE_KB=3906250 PATH="$mock_bin:$PATH" "$test_script" 2>&1); then
+        fail "空間剛好足夠時應繼續複製：$output"
+    fi
+    [[ "$output" != *"硬碟空間"* ]] || fail "空間足夠時不應顯示空間訊息：$output"
     # 不足 1 GB 的差額以 MB 表示，並無條件進位
-    output=$(MOCK_FILE_SIZE=2000000000 MOCK_DF_AVAILABLE_KB=3906250 PATH="$mock_bin:$PATH" "$test_script" 2>&1)
-    [[ "$output" = *"硬碟空間足夠：記憶卡上待複製的 RAW 檔案 2 個，共 4.00 GB；硬碟目前的可用空間 4.00 GB"* ]] || fail "空間剛好足夠時應繼續複製：$output"
     rm -rf "$target_root/20260815" "$target_root/20260816"
     : > "$MOCK_DISKUTIL_LOG"
     if output=$(MOCK_FILE_SIZE=2000000001 MOCK_DF_AVAILABLE_KB=3906250 PATH="$mock_bin:$PATH" "$test_script" 2>&1); then
         fail "只差幾個位元組時也應該失敗：$output"
     fi
-    [[ "$output" = *"不足的空間：0.1 MB"* ]] || fail "差額應無條件進位：$output"
+    [[ "$output" = *"目前無法複製檔案，尚需0.1MB硬碟空間"* ]] || fail "差額應無條件進位：$output"
 
     if ! output=$(PATH="$mock_bin:$PATH" "$test_script" 2>&1); then
         fail "RAW 日期分類預期成功：$output"
     fi
-    [[ "$output" = *"硬碟空間足夠：記憶卡上待複製的 RAW 檔案 2 個"* ]] || fail "未顯示空間檢查結果：$output"
     expect_file "$target_root/20260815/ORIGINAL.ArW"
     expect_file "$target_root/20260816/FALLBACK.CR2"
     [[ "$output" = *"驗證進度："*"100% (2/2)"* ]] || fail "驗證進度條未完成到 100%：$output"
@@ -222,7 +220,6 @@ MOCK
     if ! output=$(MOCK_DF_AVAILABLE_KB=0 PATH="$mock_bin:$PATH" "$test_script" 2>&1); then
         fail "沒有新檔案時硬碟全滿也應通過：$output"
     fi
-    [[ "$output" = *"沒有需要複製的新 RAW 檔案"* ]] || fail "未說明不需要額外空間：$output"
     : > "$MOCK_DISKUTIL_LOG"
 
     if output=$(MOCK_OTHER_ERROR=1 PATH="$mock_bin:$PATH" "$test_script" 2>&1); then
