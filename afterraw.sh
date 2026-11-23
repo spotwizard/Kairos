@@ -217,8 +217,11 @@ PHOTOSHOP_APP_BUNDLES=(
 CAMERA_RAW_WINDOW_MATCH="Camera Raw"
 CAMERA_RAW_DENOISE_CHECKBOX="去除雜色"
 CAMERA_RAW_DENOISE_SCROLL_DOWN_STEPS=8
-# 文字辨識找到「去除雜色」後，勾選框中心位於文字左緣往左約 13 point
+# 勾選框位置優先從截圖像素直接找出方框；找不到方框時才用文字位置推算：
+# 勾選框中心位於文字左緣往左約 13 point。文字辨識的框有時會把勾選框一起框進去，
+# 所以「去除雜色」四個字的寬度最多只算 46 point，超出的部分從左邊扣掉。
 CAMERA_RAW_DENOISE_CHECKBOX_LEFT_OFFSET=13
+CAMERA_RAW_DENOISE_TEXT_MAX_WIDTH=46
 CAMERA_RAW_DENOISE_OCR_MAX_SCROLL_STEPS=20
 CAMERA_RAW_DENOISE_OCR_MAX_ATTEMPTS=26
 CAMERA_RAW_DENOISE_OCR_IMAGE="${TMPDIR:-/tmp}/kairos_camera_raw_ocr.png"
@@ -1339,6 +1342,7 @@ scroll_camera_raw_panel_step_down() {
 
 # 截取 Camera Raw 視窗畫面並以 macOS Vision 文字辨識，輸出每段文字：
 # x<TAB>y<TAB>寬<TAB>高<TAB>文字（座標為相對視窗左上角的 point；含「去除雜色」的段落只框該四個字）
+# 若在「去除雜色」文字左側的截圖像素中找到勾選框，另外輸出一行：CHECKBOX<TAB>中心x<TAB>中心y
 # 失敗時在 stderr 說明原因；最後一次截圖保留在 CAMERA_RAW_DENOISE_OCR_IMAGE 供檢查
 ocr_camera_raw_window() {
     local width="$1"
@@ -1404,15 +1408,105 @@ do {
     fail("文字辨識失敗：\(error)", 3)
 }
 
+// 從截圖像素找出文字左側的勾選框，傳回方框中心 x（point，相對視窗左緣）。
+// 文字辨識的框有時包含勾選框、有時不含，所以不靠框的左緣，而是從文字右端往左掃：
+// 跨過文字與勾選框之間的空隙後，遇到的第一個方框就是勾選框。
+func findCheckboxCenterX(_ box: CGRect) -> Double? {
+    let imageWidth = cgImage.width
+    let imageHeight = cgImage.height
+    guard imageWidth > 0, imageHeight > 0, pointWidth > 0,
+          let context = CGContext(data: nil, width: imageWidth, height: imageHeight,
+                                  bitsPerComponent: 8, bytesPerRow: imageWidth * 4,
+                                  space: CGColorSpaceCreateDeviceRGB(),
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else {
+        return nil
+    }
+    context.draw(cgImage, in: CGRect(x: 0, y: 0, width: imageWidth, height: imageHeight))
+    guard let data = context.data else { return nil }
+    let pixels = data.bindMemory(to: UInt8.self, capacity: imageWidth * imageHeight * 4)
+
+    let scale = Double(imageWidth) / pointWidth
+    let right = min(imageWidth, Int(Double(box.maxX) * Double(imageWidth)))
+    let left = max(0, Int(Double(box.minX) * Double(imageWidth)) - Int(40 * scale))
+    let top = max(0, Int((1 - Double(box.maxY)) * Double(imageHeight)))
+    let bottom = min(imageHeight, Int((1 - Double(box.minY)) * Double(imageHeight)))
+    let columns = right - left
+    let rows = bottom - top
+    guard columns > 0, rows > 0 else { return nil }
+
+    var luminance = [Double](repeating: 0, count: columns * rows)
+    for row in 0..<rows {
+        for column in 0..<columns {
+            let offset = ((top + row) * imageWidth + left + column) * 4
+            luminance[row * columns + column] = 0.299 * Double(pixels[offset])
+                + 0.587 * Double(pixels[offset + 1])
+                + 0.114 * Double(pixels[offset + 2])
+        }
+    }
+    let background = luminance.sorted()[luminance.count / 2]
+
+    // 該直行有 2 個以上像素明顯不同於面板底色，就算有筆畫或框線
+    var ink = [Bool](repeating: false, count: columns)
+    for column in 0..<columns {
+        var count = 0
+        for row in 0..<rows where abs(luminance[row * columns + column] - background) > 20 {
+            count += 1
+        }
+        ink[column] = count >= 2
+    }
+
+    // 從右往左：先略過文字右邊的空白，再走過文字，直到跨過至少 5 point 的空隙
+    var index = columns - 1
+    while index >= 0 && !ink[index] { index -= 1 }
+    let minimumGap = Int(5 * scale)
+    var gap = 0
+    while index >= 0 {
+        if ink[index] {
+            if gap >= minimumGap { break }
+            gap = 0
+        } else {
+            gap += 1
+        }
+        index -= 1
+    }
+    guard index >= 0 else { return nil }
+
+    // index 是勾選框右緣；未勾選時方框是空心的，要再跨過內部找到左緣
+    let boxRight = index
+    func runStart(_ from: Int) -> Int {
+        var start = from
+        while start - 1 >= 0 && ink[start - 1] { start -= 1 }
+        return start
+    }
+    var boxLeft = runStart(boxRight)
+    if Double(boxRight - boxLeft + 1) < 7 * scale {
+        var probe = boxLeft - 1
+        var inner = 0
+        while probe >= 0 && !ink[probe] && Double(inner) < 14 * scale {
+            probe -= 1
+            inner += 1
+        }
+        if probe >= 0 && ink[probe] { boxLeft = runStart(probe) }
+    }
+    let boxWidth = Double(boxRight - boxLeft + 1) / scale
+    guard boxWidth >= 7, boxWidth <= 18 else { return nil }
+    return (Double(left) + Double(boxLeft + boxRight + 1) / 2) / scale
+}
+
+var checkboxReported = false
 for observation in request.results ?? [] {
     guard let candidate = observation.topCandidates(1).first else { continue }
     let text = candidate.string
         .replacingOccurrences(of: "\t", with: " ")
         .replacingOccurrences(of: "\n", with: " ")
     var box = observation.boundingBox
+    var isDenoise = false
     for key in ["去除雜色", "Denoise"] {
-        if let range = text.range(of: key), let keyBox = try? candidate.boundingBox(for: range) {
-            box = keyBox.boundingBox
+        if let range = text.range(of: key) {
+            isDenoise = true
+            if let keyBox = try? candidate.boundingBox(for: range) {
+                box = keyBox.boundingBox
+            }
             break
         }
     }
@@ -1421,6 +1515,12 @@ for observation in request.results ?? [] {
     let boxWidth = Int((Double(box.width) * pointWidth).rounded())
     let boxHeight = Int((Double(box.height) * pointHeight).rounded())
     print("\(left)\t\(top)\t\(boxWidth)\t\(boxHeight)\t\(text)")
+    // 只看視窗右半部的編輯面板，與後續挑選目標的規則一致
+    if isDenoise && !checkboxReported && Double(box.minX) >= 0.5,
+       let centerX = findCheckboxCenterX(box) {
+        checkboxReported = true
+        print("CHECKBOX\t\(Int(centerX.rounded()))\t\(top + boxHeight / 2)")
+    }
 }
 SWIFT
 
@@ -1435,7 +1535,8 @@ SWIFT
 }
 
 # 依文字辨識結果決定下一步（只看視窗右半部的編輯面板）：
-#   check X Y   「去除雜色」在可見範圍內，點 X,Y（文字左側的勾選框）
+#   check X Y 來源   「去除雜色」在可見範圍內，點 X,Y（文字左側的勾選框）
+#                    來源 box=從截圖像素找到的方框；text=找不到方框，改用文字位置推算
 #   expand X Y  只看到「細部」標題且下方有空間卻沒有「去除雜色」，視為「細部」已收合，點標題展開
 #   scroll      面板目前看不到「去除雜色」，需要捲動
 #   none        辨識不到任何文字（多半是終端機沒有「螢幕錄製」權限）
@@ -1446,7 +1547,15 @@ pick_camera_raw_denoise_target() {
 
     printf '%s\n' "$ocr_output" | awk -F '\t' \
         -v width="$width" -v height="$height" \
-        -v offset="$CAMERA_RAW_DENOISE_CHECKBOX_LEFT_OFFSET" '
+        -v offset="$CAMERA_RAW_DENOISE_CHECKBOX_LEFT_OFFSET" \
+        -v max_text_width="$CAMERA_RAW_DENOISE_TEXT_MAX_WIDTH" '
+        $1 == "CHECKBOX" {
+            if (!box_found && $2 + 0 >= width / 2) {
+                box_found = 1
+                box_x = $2 + 0
+            }
+            next
+        }
         NF >= 5 {
             x = $1 + 0; y = $2 + 0; w = $3 + 0; h = $4 + 0
             text = $5
@@ -1460,7 +1569,10 @@ pick_camera_raw_denoise_target() {
             center_y = int(y + h / 2)
             if (!denoise_found && (index(text, "去除雜色") || index(text, "Denoise"))) {
                 denoise_found = 1
-                denoise_x = x - offset
+                # 辨識框比四個字寬，代表左邊多框了勾選框：以右緣為準往回推文字左緣
+                text_left = x
+                if (max_text_width > 0 && w > max_text_width) text_left = x + w - max_text_width
+                denoise_x = text_left - offset
                 denoise_y = center_y
             }
             if (!detail_found && (header == "細部" || header == "Detail")) {
@@ -1472,7 +1584,8 @@ pick_camera_raw_denoise_target() {
         END {
             bottom_limit = height - 90
             if (denoise_found && denoise_y > 0 && denoise_y < bottom_limit) {
-                print "check " denoise_x " " denoise_y
+                if (box_found) print "check " box_x " " denoise_y " box"
+                else print "check " denoise_x " " denoise_y " text"
             } else if (!denoise_found && detail_found && detail_y < height - 140) {
                 print "expand " detail_x " " detail_y
             } else if (lines > 0) {
@@ -1495,6 +1608,7 @@ click_camera_raw_denoise_by_ocr() {
     local action
     local target_x
     local target_y
+    local target_source
     local expanded=0
     local scanned_from_top=0
     local scroll_steps=0
@@ -1510,13 +1624,17 @@ click_camera_raw_denoise_by_ocr() {
 
         ocr_output=$(ocr_camera_raw_window "$width" "$height" "$x" "$y" || true)
         action=$(pick_camera_raw_denoise_target "$ocr_output" "$width" "$height")
-        read -r action target_x target_y <<< "$action"
+        read -r action target_x target_y target_source <<< "$action"
 
         case "$action" in
             check)
                 target_x=$((x + target_x))
                 target_y=$((y + target_y))
-                echo "  文字辨識：找到「${CAMERA_RAW_DENOISE_CHECKBOX}」，點擊勾選框 ${target_x},${target_y}"
+                if [ "$target_source" = "box" ]; then
+                    echo "  文字辨識：找到「${CAMERA_RAW_DENOISE_CHECKBOX}」，並在畫面上找到左側的勾選框，點擊 ${target_x},${target_y}"
+                else
+                    echo "  文字辨識：找到「${CAMERA_RAW_DENOISE_CHECKBOX}」，但畫面上找不到左側的勾選框，改用文字位置推算，點擊 ${target_x},${target_y}"
+                fi
                 click_ui_point "$target_x" "$target_y" || return 2
                 return 0
                 ;;

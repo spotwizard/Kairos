@@ -917,13 +917,25 @@ test_afterraw_denoise_target() {
     [ -n "$functions" ] || fail "找不到 pick_camera_raw_denoise_target"
 
     pick() {
-        CAMERA_RAW_DENOISE_CHECKBOX_LEFT_OFFSET=13 /bin/bash -c "$functions"'
+        CAMERA_RAW_DENOISE_CHECKBOX_LEFT_OFFSET=13 CAMERA_RAW_DENOISE_TEXT_MAX_WIDTH=46 /bin/bash -c "$functions"'
 pick_camera_raw_denoise_target "$1" "$2" "$3"' _ "$1" "$2" "$3"
     }
 
     # 「細部」展開：點「去除雜色」文字左側的勾選框
-    result=$(pick $'1300\t922\t30\t18\t細部\n1412\t960\t60\t18\t去除雜色\n1412\t1003\t60\t18\tRaw 細部' 1728 1117)
-    [ "$result" = "check 1399 969" ] || fail "細部展開時應點擊去除雜色勾選框：${result}"
+    result=$(pick $'1300\t922\t30\t18\t細部\n1412\t960\t43\t18\t去除雜色\n1412\t1003\t60\t18\tRaw 細部' 1728 1117)
+    [ "$result" = "check 1399 969 text" ] || fail "細部展開時應點擊去除雜色勾選框：${result}"
+
+    # 辨識框把勾選框一起框進去（使用者影片：點到勾選框左邊）：以右緣推回文字左緣，仍點在勾選框內
+    result=$(pick $'1393\t840\t62\t18\t去除雜色' 1728 1117)
+    [ "$result" = "check 1396 849 text" ] || fail "辨識框包含勾選框時不應往左偏：${result}"
+
+    # 截圖像素找到勾選框：直接點方框中心，不管文字框左緣在哪
+    result=$(pick $'1393\t840\t62\t18\t去除雜色\nCHECKBOX\t1399\t849' 1728 1117)
+    [ "$result" = "check 1399 849 box" ] || fail "找到勾選框時應點方框中心：${result}"
+
+    # 左半部的方框不算
+    result=$(pick $'1412\t840\t43\t18\t去除雜色\nCHECKBOX\t300\t849' 1728 1117)
+    [ "$result" = "check 1399 849 text" ] || fail "左半部的方框不應採用：${result}"
 
     # 「細部」收合（使用者影片中的狀態）：先點標題展開，不可點到其他位置
     result=$(pick $'1300\t925\t30\t18\t> 細部\n1300\t965\t30\t18\t光學' 1728 1117)
