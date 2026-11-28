@@ -267,7 +267,7 @@ test_rename_raw() {
 
     sed \
         -e "s|^SOURCE_DIR=.*|SOURCE_DIR=\"$source_dir\"|" \
-        -e "s|TARGET_DIR=\"/Users/robbie/Dropbox/__攝影/\${store_name}\"|TARGET_DIR=\"$target_root/\${store_name}\"|" \
+        -e "s|TARGET_DIR=\"/Users/robbie/Library/CloudStorage/GoogleDrive-robbie1985216@gmail.com/我的雲端硬碟/\${store_name}\"|TARGET_DIR=\"$target_root/\${store_name}\"|" \
         "$ROOT/rename_raw.sh" > "$test_script"
     chmod +x "$test_script"
     "$test_script" > "$test_dir/output.log" 2>&1 || fail "Transfer RAW 搬移程序失敗"

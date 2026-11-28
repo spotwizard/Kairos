@@ -139,7 +139,7 @@ fi
 
 # 設定基礎路徑
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-BASE_DIR="/Users/robbie/Dropbox/__攝影"
+BASE_DIR="/Users/robbie/Library/CloudStorage/GoogleDrive-robbie1985216@gmail.com/我的雲端硬碟"
 CURRENT_EDIT_FILE="$SCRIPT_DIR/.current_photo_edit_dir"
 # shellcheck source=dropbox_offline.sh
 source "$SCRIPT_DIR/dropbox_offline.sh"
@@ -2435,7 +2435,7 @@ fi
 
 if [ ${#FILES_TO_OPEN[@]} -gt 0 ]; then
     # 定義模板檔案路徑
-    TEMPLATE_FILE="/Users/robbie/Dropbox/__攝影/__IG 底版.psd"
+    TEMPLATE_FILE="/Users/robbie/Library/CloudStorage/GoogleDrive-robbie1985216@gmail.com/我的雲端硬碟/__IG 底版.psd"
 
     # 檢查模板檔案是否存在
     if [ ! -f "$TEMPLATE_FILE" ]; then

@@ -23,7 +23,7 @@ find "$SOURCE_DIR" -type d | while read -r subdir; do
         
         echo "轉移 RAW 檔案：$subdir 找到 $total_files 個 RAW 檔案（ARW: $arw_count, DNG: $dng_count, CR2: ${cr2_count}），開始轉移..."
         
-        TARGET_DIR="/Users/robbie/Dropbox/__攝影/${store_name}"
+        TARGET_DIR="/Users/robbie/Library/CloudStorage/GoogleDrive-robbie1985216@gmail.com/我的雲端硬碟/${store_name}"
         mkdir -p "$TARGET_DIR/RAW"
         mkdir -p "$TARGET_DIR/PSD"
         mkdir -p "$TARGET_DIR/IG"

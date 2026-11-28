@@ -16,7 +16,7 @@ kairos
 - **轉移 RAW 檔案**：把 Transfer 裡的 `名稱-YYYYMMDD` 目錄轉移成攝影案件。
 - **修圖**：選擇攝影專案後執行重新修圖、前置作業、載入 RAW、開啟 PSD 檔案或輸出 IG／FB 成品。
 
-進入 AfterRAW 後，先排除名稱為「咖啡」「街拍」「夕陽」「橋樑」「人像」的目錄，以及名稱以「__」加數字開頭的目錄（例如 `__2025`、`__01 舊案`），再列出 Dropbox 攝影專案，依各專案內照片（含子目錄）的最新修改時間由新到舊排列；沒有照片的專案列在最後。不會預設或沿用上次修圖專案。
+進入 AfterRAW 後，先排除名稱為「咖啡」「街拍」「夕陽」「橋樑」「人像」的目錄，以及名稱以「__」加數字開頭的目錄（例如 `__2025`、`__01 舊案`），再列出攝影專案，依各專案內照片（含子目錄）的最新修改時間由新到舊排列；沒有照片的專案列在最後。不會預設或沿用上次修圖專案。
 
 專案清單可以直接打字搜尋，不需要先按其他鍵：
 
@@ -74,8 +74,8 @@ AfterRAW 各層選單都以 ESC 返回上一層：RAW／PSD 檔案清單 → 操
 | 記憶卡來源 | `/Volumes/Untitled/DCIM` |
 | 原圖封存 | `/Users/robbie/Pictures/原圖/YYYYMMDD` |
 | Transfer 來源 | `/Users/robbie/Pictures/Transfer` |
-| 攝影案件 | `/Users/robbie/Dropbox/__攝影` |
-| IG PSD template | `/Users/robbie/Dropbox/__攝影/__IG 底版.psd` |
+| 攝影案件 | `/Users/robbie/Library/CloudStorage/GoogleDrive-robbie1985216@gmail.com/我的雲端硬碟` |
+| IG PSD template | `/Users/robbie/Library/CloudStorage/GoogleDrive-robbie1985216@gmail.com/我的雲端硬碟/__IG 底版.psd` |
 
 ## AfterRAW
 
